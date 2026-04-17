@@ -1,0 +1,29 @@
+source ~/franka_ros2_ws/install/setup.bash
+mkdir -p /tmp/ros_logs
+ROS_LOG_DIR=/tmp/ros_logs ros2 launch franka_bringup example.launch.py \
+  robot_ips:=192.168.3.102 \
+  robot_type:=fr3 \
+  controller_names:=cartesian_pose_example_controller
+  
+source ~/franka_ros2_ws/install/setup.bash
+mkdir -p /tmp/ros_logs
+ROS_LOG_DIR=/tmp/ros_logs ros2 launch franka_bringup example.launch.py \
+  robot_ips:=192.168.3.102 \
+  robot_type:=fr3 \
+  controller_names:=joint_impedance_example_controller
+
+  
+source ~/franka_ros2_ws/install/setup.bash
+mkdir -p /tmp/ros_logs
+ROS_LOG_DIR=/tmp/ros_logs ros2 launch franka_bringup joint_impedance_with_ik_example_controller.launch.py
+
+
+source ~/franka_ros2_ws/install/setup.bash
+mkdir -p /tmp/ros_logs
+ROS_LOG_DIR=/tmp/ros_logs ros2 launch franka_bringup example.launch.py \
+  robot_ips:=192.168.3.102 \
+  robot_type:=fr3 \
+  controller_names:=gripper_example_controller
+  
+ calibrate result:/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib
+
