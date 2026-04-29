@@ -25,6 +25,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import PythonExpression
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -43,6 +44,47 @@ def generate_launch_description():
     controllers_yaml = LaunchConfiguration('controllers_yaml')
     controller_name = LaunchConfiguration('controller_name')
     spawn_manual_controller = LaunchConfiguration('spawn_manual_controller')
+    publish_hand_tcp_frames = LaunchConfiguration('publish_hand_tcp_frames')
+
+    prefixed_robot_frame = PythonExpression(
+        [
+            '"',
+            arm_prefix,
+            '_" + "',
+            robot_type,
+            '_link8" if "',
+            arm_prefix,
+            '" else "',
+            robot_type,
+            '_link8"',
+        ]
+    )
+    prefixed_hand_frame = PythonExpression(
+        [
+            '"',
+            arm_prefix,
+            '_" + "',
+            robot_type,
+            '_hand" if "',
+            arm_prefix,
+            '" else "',
+            robot_type,
+            '_hand"',
+        ]
+    )
+    prefixed_hand_tcp_frame = PythonExpression(
+        [
+            '"',
+            arm_prefix,
+            '_" + "',
+            robot_type,
+            '_hand_tcp" if "',
+            arm_prefix,
+            '" else "',
+            robot_type,
+            '_hand_tcp"',
+        ]
+    )
 
     bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -92,6 +134,63 @@ def generate_launch_description():
             ),
         ],
         condition=IfCondition(use_rviz),
+        output='screen',
+    )
+
+    # When the physical gripper is not launched we still publish the nominal
+    # hand and TCP frames so RViz and downstream TF consumers can resolve
+    # `<robot_type>_hand_tcp`.
+    hand_frame_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='hand_frame_publisher',
+        namespace=namespace,
+        arguments=[
+            '--frame-id',
+            prefixed_robot_frame,
+            '--child-frame-id',
+            prefixed_hand_frame,
+            '--yaw',
+            '-0.7853981633974483',
+        ],
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    '"',
+                    publish_hand_tcp_frames,
+                    '" == "true" and "',
+                    load_gripper,
+                    '" != "true"',
+                ]
+            )
+        ),
+        output='screen',
+    )
+
+    hand_tcp_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='hand_tcp_frame_publisher',
+        namespace=namespace,
+        arguments=[
+            '--frame-id',
+            prefixed_hand_frame,
+            '--child-frame-id',
+            prefixed_hand_tcp_frame,
+            '--z',
+            '0.1034',
+        ],
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    '"',
+                    publish_hand_tcp_frames,
+                    '" == "true" and "',
+                    load_gripper,
+                    '" != "true"',
+                ]
+            )
+        ),
         output='screen',
     )
 
@@ -152,6 +251,11 @@ def generate_launch_description():
                 description='Spawn the manual guiding controller on startup.',
             ),
             DeclareLaunchArgument(
+                'publish_hand_tcp_frames',
+                default_value='true',
+                description='Publish nominal hand and hand_tcp TF frames when no gripper is loaded.',
+            ),
+            DeclareLaunchArgument(
                 'controllers_yaml',
                 default_value=PathJoinSubstitution(
                     [FindPackageShare('franka_bringup'), 'config', 'controllers.yaml']
@@ -161,5 +265,7 @@ def generate_launch_description():
             bringup,
             manual_controller,
             rviz,
+            hand_frame_tf,
+            hand_tcp_tf,
         ]
     )

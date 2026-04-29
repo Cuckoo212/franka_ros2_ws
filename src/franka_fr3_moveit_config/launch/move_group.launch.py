@@ -120,8 +120,12 @@ def generate_launch_description():
     db_arg = DeclareLaunchArgument(
         'db', default_value='False', description='Database flag'
     )
+    arm_prefix_arg = DeclareLaunchArgument(
+        'arm_prefix', default_value='', description='Optional arm prefix.'
+    )
 
     return LaunchDescription([
         db_arg,
+        arm_prefix_arg,
         OpaqueFunction(function=generate_robot_nodes)
     ])
