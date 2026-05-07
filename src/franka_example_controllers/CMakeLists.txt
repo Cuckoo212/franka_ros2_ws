@@ -33,6 +33,7 @@ find_package(Eigen3 REQUIRED)
 add_library(
         ${PROJECT_NAME}
         SHARED
+        src/cable_controllers/cartesian_cable_trajectory_controller.cpp
         src/cable_controllers/cartesian_target_point_controller.cpp
         src/fr3/cartesian_elbow_example_controller.cpp
         src/fr3/cartesian_orientation_example_controller.cpp

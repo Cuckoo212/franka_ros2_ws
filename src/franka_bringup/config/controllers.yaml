@@ -49,6 +49,9 @@
       cartesian_target_point_controller:
         type: franka_example_controllers/CartesianTargetPointController
 
+      cartesian_cable_trajectory_controller:
+        type: franka_example_controllers/CartesianCableTrajectoryController
+
       cartesian_velocity_example_controller:
         type: franka_example_controllers/CartesianVelocityExampleController
 

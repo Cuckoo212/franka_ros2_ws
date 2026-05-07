@@ -332,6 +332,7 @@ def compute_grasp_point(
         "voxel_size": float(effective_voxel_size),
         "neighbor_count": int(neighbor_count),
         "skeleton_point_count": int(len(skeleton)),
+        "skeleton": skeleton.tolist(),
         "skeleton_midpoint": skeleton_midpoint.tolist(),
         "local_tangent": local_tangent.tolist(),
         "gripper_direction_a": gripper_direction_a.tolist(),

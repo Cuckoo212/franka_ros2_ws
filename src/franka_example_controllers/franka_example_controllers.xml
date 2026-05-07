@@ -41,6 +41,12 @@
             The cartesian target point controller moves the end effector smoothly to a fixed target point and then holds it.
         </description>
     </class>
+    <class name="franka_example_controllers/CartesianCableTrajectoryController"
+           type="franka_example_controllers::CartesianCableTrajectoryController" base_class_type="controller_interface::ControllerInterface">
+        <description>
+            The cartesian cable trajectory controller follows the computed cable skeleton trajectory 1 cm above the cable after reaching hover.
+        </description>
+    </class>
         <class name="franka_example_controllers/JointImpedanceWithIKExampleController"
            type="franka_example_controllers::JointImpedanceWithIKExampleController" base_class_type="controller_interface::ControllerInterface">
         <description>
