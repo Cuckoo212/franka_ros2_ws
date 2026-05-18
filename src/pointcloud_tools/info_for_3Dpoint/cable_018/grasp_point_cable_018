@@ -1,0 +1,34 @@
+{
+  "ply_path": "/home/flexcycle/franka_ros2_ws/src/pointcloud_tools/info_for_3Dpoint/cable_018/cable_robot_frame.ply",
+  "point_count": 3163,
+  "downsampled_point_count": 1316,
+  "voxel_size": 0.003423582918522619,
+  "neighbor_count": 8,
+  "skeleton_point_count": 590,
+  "skeleton_midpoint": [
+    0.2748311583966584,
+    0.3986370588275311,
+    0.8248172071323304
+  ],
+  "local_tangent": [
+    0.9820352360298057,
+    -0.14894999198406983,
+    -0.1158477236885967
+  ],
+  "gripper_direction_a": [
+    -0.11715461506087392,
+    0.0,
+    -0.993113687434595
+  ],
+  "gripper_direction_b": [
+    0.11715461506087392,
+    -0.0,
+    0.993113687434595
+  ],
+  "grasp_point": [
+    0.275133,
+    0.41863,
+    0.824868
+  ],
+  "projection_distance": 0.00030616677801495706
+}

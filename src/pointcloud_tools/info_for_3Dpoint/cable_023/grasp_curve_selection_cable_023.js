@@ -1,0 +1,1 @@
+window.viewerSelection = {"selected_gripper_direction_index":32,"selected_tcp_x_axis":[0.0207342,-0.0741384,0.997032],"selected_gripper_direction":[0.642649,-0.762947,-0.0700965],"selected_tcp_z_axis":[0.76588,0.642196,0.0318259],"rotation_about_positive_y":0.115751,"estimated_joint7":-0.413759,"limit_margin":2.63704,"within_limits":true};

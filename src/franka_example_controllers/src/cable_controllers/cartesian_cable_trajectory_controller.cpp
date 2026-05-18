@@ -51,7 +51,8 @@ namespace franka_example_controllers {
 
 namespace {
 
-constexpr const char* kCablePointRoot = "/home/flexcycle/cv_models/cmcor/info_for_3Dpoint";
+constexpr const char* kCablePointRoot =
+    "/home/flexcycle/franka_ros2_ws/src/pointcloud_tools/info_for_3Dpoint";
 const Eigen::Vector3d kHoverApproachOffset(0.0, -0.15, 0.0);
 const Eigen::Vector3d kHoverTargetZAxis = Eigen::Vector3d::UnitY();
 constexpr double kCableTrajectoryYOffsetM = -0.02;
