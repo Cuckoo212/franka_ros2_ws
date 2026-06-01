@@ -1,4 +1,0 @@
-(.venv) (base) flexcycle@leili-desktop:~/cv_models/cmcor/cmcor$ python3 capture.py 
-(sam3) flexcycle@leili-desktop:~/cv_models/sam3/scripts_test$ python test_sam3_image.py 
-(.venv) (base) flexcycle@leili-desktop:~/cv_models/cmcor$ python -m cmcor.cable_point_cloud   --cable-dir /home/flexcycle/franka_ros2_ws/src/pointcloud_tools/info_for_3Dpoint/cable_007   --keep-largest-component   --show
-

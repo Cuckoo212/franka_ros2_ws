@@ -26,4 +26,23 @@ ROS_LOG_DIR=/tmp/ros_logs ros2 launch franka_bringup example.launch.py \
   controller_names:=gripper_example_controller
   
  calibrate result:/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib
+ 
+ 
+ 
+ 
+ Multi grasp:
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ro launch franka_bringup es2_ws$ raunch.py   controllos2 launch franka_bringup example.launch.py   controller_names:=cartesian_cable_board_interact_controller
+
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ /
+usr/bin/python3 -m pointcloud_tools.record_cmcor_realsense_dataset --ros-args   -p dataset_root:=/home/flexcycle/Motion_Correlaion/cmcor/datasets/CMCor_multigrasp_board   -p recording_active_topic:=/NS_1/cable_interaction/recording_active   -p action_topic:=/NS_1/cable_interaction/action_index   -p ee_point_topic:=/NS_1/cable_interaction/ee_point
+
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ ros2 run franka_example_controllers multigrasp_orchestrator.py --ros-args   -p cable_id:=cable_000   -p initial_grasp_index:=1   -p max_grasps:=3   -p controller_node:=/NS_1/cartesian_cable_board_interact_controller   -p recording_active_topic:=/NS_1/cable_interaction/recording_active   -p dataset_root:=/home/flexcycle/Motion_Correlaion/cmcor/datasets/CMCor_multigrasp_board   -p current_grasp_plan_id:=multi_grasp/cable_000/grasp_point_cable_000
+
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws$ ros2 param set /NS_1/cartesian_cable_board_interact_controller   target_cable_id "multi_grasp/cable_000/grasp_point_cable_000"
+
+
+3D Point Cloud:
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ /usr/bin/python3 -m pointcloud_tools.cable_on_board.publish_ply_to_rviz multi_grasp/cable_000
+
+
 

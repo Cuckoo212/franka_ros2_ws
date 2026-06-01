@@ -1,0 +1,45 @@
+{
+  "ply_path": "/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/cable_029/cable_robot_frame.ply",
+  "point_count": 2901,
+  "downsampled_point_count": 1191,
+  "voxel_size": 0.0035725066829888664,
+  "neighbor_count": 8,
+  "skeleton_point_count": 546,
+  "skeleton_midpoint": [
+    0.29072807964825237,
+    0.12542186609888126,
+    0.8611717565629858
+  ],
+  "local_tangent": [
+    0.981113747928928,
+    -0.16555715352824807,
+    -0.10003320718879297
+  ],
+  "gripper_direction_a": [
+    -0.10143296206485201,
+    0.0,
+    -0.9948423765636194
+  ],
+  "gripper_direction_b": [
+    0.10143296206485201,
+    -0.0,
+    0.9948423765636194
+  ],
+  "grasp_point": [
+    0.290653,
+    0.125137,
+    0.861039
+  ],
+  "projection_distance": 0.0003231252897706086,
+  "selected_gripper_frame_status": "selected",
+  "selected_gripper_direction_label": "a",
+  "selected_estimated_joint7": 1.452208866,
+  "selected_joint7_limit_margin": 1.598591134,
+  "selected_joint7_within_limits": true,
+  "selected_gripper_frame_position": [0.290653000, 0.125137000, 0.861039000],
+  "selected_gripper_direction": [-0.101432962, 0.000000000, -0.994842377],
+  "selected_tcp_x_axis": [0.994842377, 0.000000000, -0.101432962],
+  "selected_tcp_y_axis": [-0.101432962, 0.000000000, -0.994842377],
+  "selected_tcp_z_axis": [0.000000000, 1.000000000, 0.000000000]
+
+}
