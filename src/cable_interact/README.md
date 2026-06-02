@@ -54,7 +54,37 @@ pointcloud_tools/info_for_3Dpoint/multi_grasp/cable_000
 pointcloud_tools/info_for_3Dpoint/multi_grasp/cable_000/mask.png
 ```
 
-用sam3模型生成的mask替换
+用 SAM3 模型生成线缆前景 mask，替换占位文件：
+
+```bash
+cd ~/franka_ros2_ws/src/cable_interact
+~/miniconda3/envs/sam3/bin/python -m pointcloud_tools.generate_cable_mask_sam3 \
+  --cable-id cable_000
+```
+
+脚本默认读取：
+
+```text
+pointcloud_tools/info_for_3Dpoint/multi_grasp/cable_000/rgb_000.png
+```
+
+并生成：
+
+```text
+pointcloud_tools/info_for_3Dpoint/multi_grasp/cable_000/mask.png
+pointcloud_tools/info_for_3Dpoint/multi_grasp/cable_000/mask_overlay.png
+```
+
+创建新的样本时，只需要把 `--cable-id cable_000` 改为对应目录名，例如
+`--cable-id cable_001` 会读取 `rgb_001.png`。如果 RGB 文件序号和目录序号
+不同，可额外指定 `--rgb-id rgb_123`。
+
+默认行为是合并 SAM3 对文本提示 `cable` 返回的全部候选。如果图像中有多根
+线缆，但只需要最高分实例，可追加：
+
+```bash
+  --selection best
+```
 
 ### 2.3 生成相机坐标系和机器人坐标系点云
 
