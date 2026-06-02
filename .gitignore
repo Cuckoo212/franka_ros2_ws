@@ -6,3 +6,11 @@ __pycache__/
 *.pyc
 .vscode/
 .DS_Store
+
+# Local SAM3 model artifacts. Keep source code in sam3_project tracked.
+src/cable_interact/sam3_project/checkpoints/
+src/cable_interact/sam3_project/**/*.pt
+src/cable_interact/sam3_project/**/*.pth
+src/cable_interact/sam3_project/**/*.ckpt
+src/cable_interact/sam3_project/**/*.safetensors
+src/cable_interact/sam3_project/**/.cache/
