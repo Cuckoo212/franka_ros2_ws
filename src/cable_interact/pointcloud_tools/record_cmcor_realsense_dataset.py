@@ -17,6 +17,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Bool, Int32
 
+from pointcloud_tools.remote_transfer import ScpTransferQueue
+
 
 class CmcorRealsenseDatasetRecorder(Node):
     def __init__(self) -> None:
@@ -42,6 +44,8 @@ class CmcorRealsenseDatasetRecorder(Node):
         self.declare_parameter("crop_height", 0)
         self.declare_parameter("scale_factor", 1.0)
         self.declare_parameter("robot_base_to_camera_transform_json", "")
+        self.declare_parameter("scp_destination", "")
+        self.declare_parameter("scp_timeout_sec", 300.0)
 
         self.dataset_root = Path(self.get_parameter("dataset_root").value).expanduser()
         self.buffer_root = self.dataset_root / "motion_correlation_buffers"
@@ -56,6 +60,17 @@ class CmcorRealsenseDatasetRecorder(Node):
         self.crop_height = int(self.get_parameter("crop_height").value)
         self.scale_factor = float(self.get_parameter("scale_factor").value)
         self.robot_base_to_camera_transform = self._parse_transform_parameter()
+        scp_destination = str(self.get_parameter("scp_destination").value).strip()
+        self.uploader = (
+            ScpTransferQueue(
+                scp_destination,
+                timeout_sec=float(self.get_parameter("scp_timeout_sec").value),
+                log_info=self.get_logger().info,
+                log_error=self.get_logger().error,
+            )
+            if scp_destination
+            else None
+        )
         action_index_topic = str(self.get_parameter("action_index_topic").value).strip()
         self.action_topic = (
             action_index_topic
@@ -219,6 +234,8 @@ class CmcorRealsenseDatasetRecorder(Node):
         self.get_logger().info(
             f"Finished CMCor sequence {self.sequence_name}: {self.frame_index} frames."
         )
+        if self.uploader is not None:
+            self.uploader.submit(self.sequence_dir)
         self.recording = False
         self.sequence_dir = None
         self.sequence_name = None
@@ -270,6 +287,8 @@ class CmcorRealsenseDatasetRecorder(Node):
     def destroy_node(self) -> bool:
         if self.recording:
             self.finish_sequence()
+        if self.uploader is not None:
+            self.uploader.close()
         return super().destroy_node()
 
 

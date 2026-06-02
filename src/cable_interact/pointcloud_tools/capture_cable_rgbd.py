@@ -13,6 +13,8 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 
+from pointcloud_tools.remote_transfer import ScpTransferQueue
+
 
 DEFAULT_INFO_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint")
 DEFAULT_OUTPUT_ROOT = DEFAULT_INFO_ROOT / "multi_grasp"
@@ -49,10 +51,30 @@ def parse_args():
             f"Default: {DEFAULT_OUTPUT_ROOT}"
         ),
     )
+    parser.add_argument(
+        "--scp-destination",
+        default="",
+        help=(
+            "Optional remote folder for background uploads, for example "
+            "flexcycle@10.157.175.101:~/Desktop/cable_rgbd/. "
+            "Passwordless SSH must already be configured."
+        ),
+    )
+    parser.add_argument(
+        "--scp-timeout-sec",
+        type=float,
+        default=300.0,
+        help="Timeout for each background SCP upload. Default: 300",
+    )
     return parser.parse_args()
 
 
-def run_capture(output_root):
+def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
+    uploader = (
+        ScpTransferQueue(scp_destination, timeout_sec=scp_timeout_sec)
+        if scp_destination
+        else None
+    )
     pipeline = rs.pipeline()
     config = rs.config()
 
@@ -122,17 +144,21 @@ def run_capture(output_root):
                     f"{rgb_path.name}, {depth_path.name}, {mask_path.name}, {parameters_path.name} "
                     f"to {cable_dir}"
                 )
+                if uploader is not None:
+                    uploader.submit(cable_dir)
 
             elif key == 27:
                 break
     finally:
         pipeline.stop()
         cv2.destroyAllWindows()
+        if uploader is not None:
+            uploader.close()
 
 
 def main():
     args = parse_args()
-    run_capture(args.output_root)
+    run_capture(args.output_root, args.scp_destination, args.scp_timeout_sec)
 
 
 if __name__ == "__main__":

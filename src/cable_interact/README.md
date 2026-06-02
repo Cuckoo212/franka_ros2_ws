@@ -35,6 +35,12 @@ cd ~/franka_ros2_ws/src/cable_interact
 /usr/bin/python3 -m pointcloud_tools.capture_cable_rgbd
 ```
 
+需要将采集结果自动发送到 GPU PC 时，先按第 7 节配置 SSH key，然后追加：
+
+```bash
+  --scp-destination flexcycle@10.157.175.101:~/Desktop/cable_rgbd/
+```
+
 在图像窗口中：
 
 - 按 `s` 保存一组图像。
@@ -129,6 +135,13 @@ cd ~/franka_ros2_ws/src/cable_interact
   -p ee_point_topic:=/NS_1/cable_interaction/ee_point
 ```
 
+需要将每次录制完成的 CMCor 序列自动发送到 GPU PC 时，先按第 7 节配置 SSH key，
+然后在命令末尾追加：
+
+```bash
+  -p scp_destination:=flexcycle@10.157.175.101:~/Desktop/cmcor_sequences/
+```
+
 ### 终端 3：启动 Multi-grasp orchestrator
 
 ```bash
@@ -214,3 +227,20 @@ CMCor 录制序列保存在：
 - RealSense 无法启动：确认采集脚本和 ROS RealSense 节点没有同时占用相机。
 - 找不到初始抓取计划：确认 `grasp_point_cable_000` 已通过第 2.4 节生成。
 - 更改脚本后运行结果未更新：重新编译 `franka_example_controllers` 并重新执行 `source ~/franka_ros2_ws/install/setup.bash`。
+
+## 7. 自动发送采集数据到 GPU PC
+
+上传在后台线程中执行，不会阻塞 RealSense 图像采集或 ROS 回调。RGB-D 采集脚本会发送完整的
+`cable_XXX` 目录；CMCor 录制节点会在序列写入完成后发送完整的时间戳目录。
+
+先在 Mini PC 上配置免密 SSH。自动上传启用了 `BatchMode=yes`，不会等待密码输入：
+
+```bash
+ssh-keygen -t ed25519
+ssh-copy-id flexcycle@10.157.175.101
+ssh flexcycle@10.157.175.101 true
+```
+
+目标目录由 GPU PC 端预先创建。实际路径确定后，替换命令中的 `~/Desktop/cable_rgbd/`
+和 `~/Desktop/cmcor_sequences/`。未传入 `--scp-destination` 或 `scp_destination`
+时，不会执行网络传输。
