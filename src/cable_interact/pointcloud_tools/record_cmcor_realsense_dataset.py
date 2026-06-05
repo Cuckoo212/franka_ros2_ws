@@ -25,7 +25,7 @@ class CmcorRealsenseDatasetRecorder(Node):
         super().__init__("cmcor_realsense_dataset_recorder")
         self.declare_parameter(
             "dataset_root",
-            "/home/flexcycle/Motion_Correlaion/cmcor/datasets/CMCor",
+            "/home/flexcycle/Motion_Correlation/cmcor/datasets/CMCor",
         )
         self.declare_parameter("color_topic", "/camera/camera/color/image_raw")
         self.declare_parameter("depth_topic", "/camera/camera/depth/image_rect_raw")

@@ -8,6 +8,7 @@ from typing import List, Sequence
 import rclpy
 from geometry_msgs.msg import Point
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
@@ -366,6 +367,41 @@ def build_vector_marker_array(
     return marker_array
 
 
+def build_additional_grasp_point_markers(
+    frame_id: str,
+    stamp,
+    grasp_point: Sequence[float],
+    label: str,
+) -> list[Marker]:
+    point_marker = Marker()
+    point_marker.header.frame_id = frame_id
+    point_marker.header.stamp = stamp
+    point_marker.ns = "additional_grasp_points"
+    point_marker.id = 0
+    point_marker.type = Marker.SPHERE
+    point_marker.action = Marker.ADD
+    point_marker.pose.position = build_point(grasp_point)
+    point_marker.pose.orientation.w = 1.0
+    point_marker.scale.x = 0.016
+    point_marker.scale.y = 0.016
+    point_marker.scale.z = 0.016
+    point_marker.color.r = 0.94
+    point_marker.color.g = 0.27
+    point_marker.color.b = 0.27
+    point_marker.color.a = 1.0
+
+    label_marker = Marker()
+    add_marker_text_common(label_marker, frame_id, stamp, "additional_grasp_point_labels", 0)
+    label_marker.text = label
+    label_marker.pose.position = build_point(
+        [grasp_point[0], grasp_point[1], grasp_point[2] + 0.025]
+    )
+    label_marker.color.r = 0.94
+    label_marker.color.g = 0.27
+    label_marker.color.b = 0.27
+    return [point_marker, label_marker]
+
+
 def quaternion_from_axes(
     x_axis: Sequence[float],
     y_axis: Sequence[float],
@@ -580,6 +616,7 @@ class PlyCloudPublisher(Node):
         camera_frame_id: str | None = None,
         calib_path: Path | None = None,
         grasp_plan_path: Path | None = None,
+        additional_grasp_plan_path: Path | None = None,
         vector_marker_topic: str = DEFAULT_VECTOR_MARKER_TOPIC,
     ):
         super().__init__("ply_cloud_publisher")
@@ -593,6 +630,8 @@ class PlyCloudPublisher(Node):
         self._camera_frame_id = camera_frame_id
         self._grasp_plan_path = grasp_plan_path
         self._grasp_plan = None
+        self._additional_grasp_plan_path = additional_grasp_plan_path
+        self._additional_grasp_point = None
         self._vector_marker_publisher = None
         self._target_tcp_frame_id = DEFAULT_TARGET_TCP_FRAME_ID
         self._timer = self.create_timer(1.0 / rate_hz, self.publish_cloud)
@@ -614,6 +653,19 @@ class PlyCloudPublisher(Node):
                 f"Grasp plan file not found, skipping gripper direction markers: {grasp_plan_path}"
             )
 
+        if additional_grasp_plan_path is not None and additional_grasp_plan_path.is_file():
+            self._additional_grasp_point = load_grasp_plan(additional_grasp_plan_path)["grasp_point"]
+            if self._vector_marker_publisher is None:
+                self._vector_marker_publisher = self.create_publisher(MarkerArray, vector_marker_topic, 10)
+            self.get_logger().info(
+                f"Loaded additional grasp point from {additional_grasp_plan_path}; "
+                f"publishing it as 'grasp point 1' on {vector_marker_topic}."
+            )
+        elif additional_grasp_plan_path is not None:
+            self.get_logger().warning(
+                f"Additional grasp plan file not found, skipping grasp point 1: {additional_grasp_plan_path}"
+            )
+
         self.get_logger().info(
             f"Loaded {len(self._points)} points from {ply_path} and publishing on {topic} in frame {frame_id}."
         )
@@ -633,37 +685,58 @@ class PlyCloudPublisher(Node):
         header.frame_id = self._frame_id
         cloud_msg = point_cloud2.create_cloud_xyz32(header, self._points)
         self._publisher.publish(cloud_msg)
-        if self._grasp_plan is not None and self._vector_marker_publisher is not None:
+        if self._vector_marker_publisher is not None:
             selected_frame = None
-            if self._grasp_plan_path is not None:
+            if self._grasp_plan is not None and self._grasp_plan_path is not None:
                 try:
                     self._grasp_plan = load_grasp_plan(self._grasp_plan_path)
                     selected_frame = load_selected_gripper_frame(self._grasp_plan_path)
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
                     self.get_logger().warning(f"Failed to refresh grasp plan {self._grasp_plan_path}: {exc}")
-            marker_array = build_vector_marker_array(
-                self._frame_id,
-                header.stamp,
-                self._grasp_plan,
-                selected_frame,
-            )
+            marker_array = MarkerArray()
+            if self._grasp_plan is not None:
+                marker_array = build_vector_marker_array(
+                    self._frame_id,
+                    header.stamp,
+                    self._grasp_plan,
+                    selected_frame,
+                )
+            if self._additional_grasp_plan_path is not None:
+                try:
+                    self._additional_grasp_point = load_grasp_plan(
+                        self._additional_grasp_plan_path
+                    )["grasp_point"]
+                except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                    self.get_logger().warning(
+                        f"Failed to refresh additional grasp plan {self._additional_grasp_plan_path}: {exc}"
+                    )
+            if self._additional_grasp_point is not None:
+                marker_array.markers.extend(
+                    build_additional_grasp_point_markers(
+                        self._frame_id,
+                        header.stamp,
+                        self._additional_grasp_point,
+                        "grasp point 1",
+                    )
+                )
             self._vector_marker_publisher.publish(marker_array)
-            candidate_tcp_transforms = build_candidate_tcp_transforms(
-                self._frame_id,
-                header.stamp,
-                self._grasp_plan["grasp_point"],
-                self._grasp_plan["gripper_directions"],
-            )
-            if candidate_tcp_transforms:
-                self._dynamic_tf_broadcaster.sendTransform(candidate_tcp_transforms)
-            target_tcp_transform = build_target_tcp_transform(
-                self._frame_id,
-                self._target_tcp_frame_id,
-                header.stamp,
-                selected_frame,
-            )
-            if target_tcp_transform is not None:
-                self._dynamic_tf_broadcaster.sendTransform(target_tcp_transform)
+            if self._grasp_plan is not None:
+                candidate_tcp_transforms = build_candidate_tcp_transforms(
+                    self._frame_id,
+                    header.stamp,
+                    self._grasp_plan["grasp_point"],
+                    self._grasp_plan["gripper_directions"],
+                )
+                if candidate_tcp_transforms:
+                    self._dynamic_tf_broadcaster.sendTransform(candidate_tcp_transforms)
+                target_tcp_transform = build_target_tcp_transform(
+                    self._frame_id,
+                    self._target_tcp_frame_id,
+                    header.stamp,
+                    selected_frame,
+                )
+                if target_tcp_transform is not None:
+                    self._dynamic_tf_broadcaster.sendTransform(target_tcp_transform)
         if self._camera_points is not None and self._camera_publisher is not None:
             camera_header = Header()
             camera_header.stamp = header.stamp
@@ -698,7 +771,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "cable_id",
-        help="Cable index such as '014' or '14'. The script resolves both robot and camera PLY paths automatically.",
+        help=(
+            "Cable index such as '014' or '14', or a relative cable directory such as "
+            "'multi_grasp/cable_000'. "
+            "The script resolves both robot and camera PLY paths automatically."
+        ),
+    )
+    parser.add_argument(
+        "--additional-grasp-plan",
+        help=(
+            "Optional relative grasp-plan path whose grasp_point is added to RViz, "
+            "for example 'multi_grasp/cable_000/grasp_sample_001/grasp_sample_001'."
+        ),
     )
     return parser.parse_args()
 
@@ -707,6 +791,11 @@ def main() -> None:
     args = parse_args()
     robot_ply_path, camera_ply_path = build_cable_paths(args.cable_id)
     grasp_plan_path = build_grasp_plan_path(args.cable_id)
+    additional_grasp_plan_path = (
+        build_grasp_plan_path(args.additional_grasp_plan)
+        if args.additional_grasp_plan
+        else None
+    )
     if not robot_ply_path.is_file():
         raise FileNotFoundError(f"Robot-frame PLY file not found: {robot_ply_path}")
     if DEFAULT_RATE_HZ <= 0.0:
@@ -727,13 +816,17 @@ def main() -> None:
         None,
         DEFAULT_CALIB_FILE,
         grasp_plan_path,
+        additional_grasp_plan_path,
         DEFAULT_VECTOR_MARKER_TOPIC,
     )
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

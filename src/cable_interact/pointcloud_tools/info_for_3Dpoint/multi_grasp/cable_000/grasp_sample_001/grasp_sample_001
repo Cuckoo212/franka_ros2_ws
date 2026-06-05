@@ -206,5 +206,16 @@
   "robot_frame": "fr3_link0",
   "sampled_segment_point_count": 337,
   "source": "cmcor.recompute_next_grasp",
-  "source_sequence": "2026-05-28-173719"
+  "source_sequence": "2026-05-28-173719",
+  "selected_gripper_frame_status": "selected",
+  "selected_gripper_direction_label": "27",
+  "selected_estimated_joint7": 0.042228794,
+  "selected_joint7_limit_margin": 3.008571206,
+  "selected_joint7_within_limits": true,
+  "selected_gripper_frame_position": [0.285623031, 0.209554949, 0.504230131],
+  "selected_gripper_direction": [0.832450178, 0.000000000, 0.554099901],
+  "selected_tcp_x_axis": [0.832450178, 0.000000000, 0.554099901],
+  "selected_tcp_y_axis": [0.554099901, 0.000000000, -0.832450178],
+  "selected_tcp_z_axis": [0.000000000, 1.000000000, 0.000000000]
+
 }

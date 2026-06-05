@@ -6,7 +6,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import shlex
+import subprocess
 import sys
+import tarfile
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -25,9 +29,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 DEFAULT_CABLE_INTERACT_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact")
-DEFAULT_CMCOR_ROOT = Path("/home/flexcycle/Motion_Correlaion/cmcor")
+DEFAULT_CMCOR_ROOT = Path("/home/flexcycle/Motion_Correlation/cmcor")
 DEFAULT_GRASP_PLAN_ROOT = DEFAULT_CABLE_INTERACT_ROOT / "pointcloud_tools" / "info_for_3Dpoint"
-DEFAULT_DATASET_ROOT = Path("/home/flexcycle/Motion_Correlaion/cmcor/datasets/CMCor")
+DEFAULT_DATASET_ROOT = Path("/home/flexcycle/Motion_Correlation/cmcor/datasets/CMCor")
 DEFAULT_HANDEYE_CALIBRATION_PATH = Path(
     "/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib"
 )
@@ -150,6 +154,13 @@ class MultiGraspOrchestrator(Node):
         self.declare_parameter("write_debug_masks", True)
         self.declare_parameter("update_multigrasp_sequences_json", True)
         self.declare_parameter("multigrasp_sequences_json_path", "")
+        self.declare_parameter("processing_mode", "local")
+        self.declare_parameter("remote_worker_host", "")
+        self.declare_parameter("remote_job_inbox", "")
+        self.declare_parameter("remote_result_outbox", "")
+        self.declare_parameter("remote_result_inbox", "")
+        self.declare_parameter("remote_result_timeout_sec", 600.0)
+        self.declare_parameter("remote_command_timeout_sec", 30.0)
 
         self.cable_id = str(self.get_parameter("cable_id").value)
         self.cable_dir_name = normalize_cable_dir_name(self.cable_id)
@@ -186,6 +197,39 @@ class MultiGraspOrchestrator(Node):
             else self.dataset_root / "multigrasp_sequences.json"
         )
         self.recorded_sequence_group: list[str] = []
+        self.processing_mode = str(self.get_parameter("processing_mode").value).strip().lower()
+        self.remote_worker_host = str(self.get_parameter("remote_worker_host").value).strip()
+        self.remote_job_inbox = str(self.get_parameter("remote_job_inbox").value).strip()
+        self.remote_result_outbox = str(
+            self.get_parameter("remote_result_outbox").value
+        ).strip()
+        remote_result_inbox = str(self.get_parameter("remote_result_inbox").value).strip()
+        self.remote_result_inbox = (
+            Path(remote_result_inbox).expanduser()
+            if remote_result_inbox
+            else self.dataset_root / "remote_results"
+        )
+        self.remote_result_timeout_sec = float(
+            self.get_parameter("remote_result_timeout_sec").value
+        )
+        self.remote_command_timeout_sec = float(
+            self.get_parameter("remote_command_timeout_sec").value
+        )
+        if self.processing_mode not in {"local", "remote"}:
+            raise ValueError("processing_mode must be 'local' or 'remote'")
+        if self.processing_mode == "remote":
+            if (
+                not self.remote_worker_host
+                or not self.remote_job_inbox
+                or not self.remote_result_outbox
+            ):
+                raise ValueError(
+                    "remote_worker_host, remote_job_inbox and remote_result_outbox "
+                    "are required in remote mode"
+                )
+            if self.remote_result_timeout_sec <= 0.0 or self.remote_command_timeout_sec <= 0.0:
+                raise ValueError("Remote timeout parameters must be greater than zero")
+            self.remote_result_inbox.mkdir(parents=True, exist_ok=True)
 
         add_import_path(self.cable_interact_root)
         add_import_path(self.cmcor_python_root)
@@ -225,7 +269,8 @@ class MultiGraspOrchestrator(Node):
         self.create_timer(0.5, self.timer_callback)
         self.get_logger().info(
             f"Multi-grasp orchestrator ready for {self.cable_dir_name}, "
-            f"current grasp {self.current_grasp_index}, max grasps {self.max_grasps}."
+            f"current grasp {self.current_grasp_index}, max grasps {self.max_grasps}, "
+            f"processing mode {self.processing_mode}."
         )
 
     def _initialize_previous_grasp(self) -> None:
@@ -317,6 +362,16 @@ class MultiGraspOrchestrator(Node):
         self.get_logger().info(f"Processing sequence {sequence_dir.name} for next grasp.")
 
         sample_grasp_index = self.current_grasp_index
+        if self.processing_mode == "remote":
+            plan_id, plan_path = self.process_sequence_remotely(
+                sequence_dir, sample_grasp_index
+            )
+            self.current_grasp_index += 1
+            center_robot = np.asarray(load_grasp_plan(plan_path)["grasp_point"], dtype=np.float64)
+            self._remember_robot_grasp(center_robot)
+            self.set_controller_target(plan_id)
+            return
+
         motion_masks, camera_matrix = self.compute_motion_masks(
             sequence_dir, sample_grasp_index
         )
@@ -341,6 +396,219 @@ class MultiGraspOrchestrator(Node):
         center_robot = np.asarray(load_grasp_plan(plan_path)["grasp_point"], dtype=np.float64)
         self._remember_robot_grasp(center_robot)
         self.set_controller_target(plan_id)
+
+    def process_sequence_remotely(
+        self, sequence_dir: Path, sample_grasp_index: int
+    ) -> tuple[str, Path]:
+        job_id = f"{self.cable_dir_name}_{make_sample_grasp_id(sample_grasp_index)}_{sequence_dir.name}"
+        job = {
+            "job_id": job_id,
+            "sequence_name": sequence_dir.name,
+            "cable_dir_name": self.cable_dir_name,
+            "sample_grasp_index": sample_grasp_index,
+            "algorithm": self.algorithm,
+            "gpu": self.gpu,
+            "use_dummy_flow": self.use_dummy_flow,
+            "write_debug_masks": self.write_debug_masks,
+            "gripper_direction_sample_count": self.gripper_direction_sample_count,
+            "camera_frame": self.camera_frame,
+            "robot_frame": self.robot_frame,
+            "camera_to_robot_rotation": self.camera_to_robot_rotation.tolist(),
+            "camera_to_robot_translation": self.camera_to_robot_translation.tolist(),
+            "previous_grasps_camera": [
+                point.tolist() for point in self.previous_grasps_camera
+            ],
+        }
+        self.submit_remote_job(job)
+        archive_path = self.wait_for_remote_result(job_id)
+        grasp_name = make_sample_grasp_id(sample_grasp_index)
+        self.extract_remote_result(archive_path, grasp_name)
+        ready_path = self.remote_result_inbox / f"{job_id}.ready"
+        archive_path.unlink(missing_ok=True)
+        ready_path.unlink(missing_ok=True)
+
+        plan_id = f"multi_grasp/{self.cable_dir_name}/{grasp_name}/{grasp_name}"
+        plan_path = resolve_plan_path(self.grasp_plan_root, plan_id)
+        plan = load_grasp_plan(plan_path)
+        grasp_point = plan.get("grasp_point")
+        directions = plan.get("gripper_directions")
+        if not isinstance(grasp_point, list) or len(grasp_point) != 3:
+            raise RuntimeError(f"Remote result has an invalid grasp_point: {plan_path}")
+        if not isinstance(directions, list) or not directions:
+            raise RuntimeError(f"Remote result has no gripper_directions: {plan_path}")
+        self.get_logger().info(
+            f"Accepted remote grasp plan {plan_id}: "
+            f"[{float(grasp_point[0]):.4f}, {float(grasp_point[1]):.4f}, "
+            f"{float(grasp_point[2]):.4f}]"
+        )
+        return plan_id, plan_path
+
+    def submit_remote_job(self, job: dict) -> None:
+        job_id = str(job["job_id"])
+        remote_tmp = f"{self.remote_job_inbox}/{job_id}.json.tmp"
+        remote_final = f"{self.remote_job_inbox}/{job_id}.json"
+        for suffix in (".tar.gz", ".ready", ".error.json"):
+            (self.remote_result_inbox / f"{job_id}{suffix}").unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory(prefix="multigrasp_job_") as tmp_dir:
+            local_job = Path(tmp_dir) / f"{job_id}.json"
+            with local_job.open("w", encoding="utf-8") as fp:
+                json.dump(job, fp, sort_keys=True, indent=2)
+                fp.write("\n")
+            self.run_command(
+                [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    self.remote_worker_host,
+                    f"mkdir -p {shlex.quote(self.remote_job_inbox)}",
+                ],
+                "create remote job inbox",
+            )
+            self.run_command(
+                [
+                    "scp",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    str(local_job),
+                    f"{self.remote_worker_host}:{remote_tmp}",
+                ],
+                "upload remote multi-grasp job",
+            )
+            self.run_command(
+                [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    self.remote_worker_host,
+                    f"mv {shlex.quote(remote_tmp)} {shlex.quote(remote_final)}",
+                ],
+                "publish remote multi-grasp job",
+            )
+        self.get_logger().info(f"Submitted remote multi-grasp job: {job_id}")
+
+    def wait_for_remote_result(self, job_id: str) -> Path:
+        ready_path = self.remote_result_inbox / f"{job_id}.ready"
+        archive_path = self.remote_result_inbox / f"{job_id}.tar.gz"
+        error_path = self.remote_result_inbox / f"{job_id}.error.json"
+        remote_ready_path = f"{self.remote_result_outbox}/{job_id}.ready"
+        remote_archive_path = f"{self.remote_result_outbox}/{job_id}.tar.gz"
+        remote_error_path = f"{self.remote_result_outbox}/{job_id}.error.json"
+        deadline = time.time() + self.remote_result_timeout_sec
+        while time.time() < deadline:
+            if self.remote_file_exists(remote_error_path):
+                self.pull_remote_file(remote_error_path, error_path)
+                with error_path.open("r", encoding="utf-8") as fp:
+                    error = json.load(fp)
+                raise RuntimeError(f"3090 worker failed: {error.get('error', error)}")
+            if self.remote_file_exists(remote_ready_path) and self.remote_file_exists(
+                remote_archive_path
+            ):
+                self.pull_remote_file(remote_archive_path, archive_path)
+                ready_path.write_text("ready\n", encoding="utf-8")
+                self.get_logger().info(f"Received remote multi-grasp result: {archive_path}")
+                return archive_path
+            time.sleep(0.5)
+        raise TimeoutError(f"Timed out waiting for 3090 result: {job_id}")
+
+    def extract_remote_result(self, archive_path: Path, expected_grasp_name: str) -> None:
+        self.multi_grasp_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for member in archive.getmembers():
+                relative_path = Path(member.name)
+                if relative_path.is_absolute() or ".." in relative_path.parts:
+                    raise RuntimeError(f"Unsafe path in remote result archive: {member.name}")
+                if not relative_path.parts or relative_path.parts[0] != expected_grasp_name:
+                    raise RuntimeError(
+                        f"Unexpected path in remote result archive: {member.name}"
+                    )
+                if not (member.isfile() or member.isdir()):
+                    raise RuntimeError(
+                        f"Unsupported file type in remote result archive: {member.name}"
+                    )
+            archive.extractall(self.multi_grasp_dir)
+        self.remove_remote_result_files(archive_path.stem.removesuffix(".tar"))
+
+    def remote_file_exists(self, remote_path: str) -> bool:
+        command = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            self.remote_worker_host,
+            f"test -f {shlex.quote(remote_path)}",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=self.remote_command_timeout_sec,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"Failed to check remote result: {exc}") from exc
+        if result.returncode not in (0, 1):
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            raise RuntimeError(f"Failed to check remote result: {detail}")
+        return result.returncode == 0
+
+    def pull_remote_file(self, remote_path: str, local_path: Path) -> None:
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_tmp_path = local_path.with_name(f"{local_path.name}.tmp")
+        self.run_command(
+            [
+                "scp",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                f"{self.remote_worker_host}:{remote_path}",
+                str(local_tmp_path),
+            ],
+            "download remote multi-grasp result",
+        )
+        os.replace(local_tmp_path, local_path)
+
+    def remove_remote_result_files(self, job_id: str) -> None:
+        paths = [
+            f"{self.remote_result_outbox}/{job_id}.tar.gz",
+            f"{self.remote_result_outbox}/{job_id}.ready",
+            f"{self.remote_result_outbox}/{job_id}.error.json",
+        ]
+        self.run_command(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                self.remote_worker_host,
+                "rm -f " + " ".join(shlex.quote(path) for path in paths),
+            ],
+            "remove downloaded remote multi-grasp result",
+        )
+
+    def run_command(self, command: list[str], description: str) -> None:
+        try:
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=self.remote_command_timeout_sec,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"Failed to {description}: {exc}") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            raise RuntimeError(f"Failed to {description}: {detail}")
 
     def register_multigrasp_sequence(self, sequence_name: str) -> None:
         if not self.update_multigrasp_sequences_json:

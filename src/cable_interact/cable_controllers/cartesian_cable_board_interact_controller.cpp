@@ -445,6 +445,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       board_contact_settle_start_time_ = -1.0;
       interaction_recording_active_ = false;
       interaction_action_index_ = -1;
+      interaction_force_baseline_valid_ = false;
+      interaction_skip_action_ = {false, false};
       last_interaction_publish_time_ = -1.0;
       initialization_flag_ = false;
       RCLCPP_INFO(get_node()->get_logger(),
@@ -504,6 +506,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     auto_declare<double>("interaction_move_duration", 3.0);
     auto_declare<double>("interaction_hold_duration", 0.5);
     auto_declare<double>("interaction_publish_rate", 30.0);
+    auto_declare<double>("interaction_resistance_force_threshold", 6.0);
     auto_declare<double>("gripper_width", 0.004);
     auto_declare<double>("gripper_speed", 0.02);
     auto_declare<double>("gripper_force", 10.0);
@@ -566,6 +569,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
         get_node()->get_parameter("interaction_hold_duration").as_double();
     interaction_publish_rate_hz_ =
         get_node()->get_parameter("interaction_publish_rate").as_double();
+    interaction_resistance_force_threshold_n_ =
+        get_node()->get_parameter("interaction_resistance_force_threshold").as_double();
     if (motion_duration_sec_ <= 0.0 || align_y_duration_sec_ <= 0.0 ||
         roll_stage1_duration_sec_ <= 0.0 || roll_stage2_duration_sec_ <= 0.0 ||
         move_to_target_duration_sec_ <= 0.0) {
@@ -585,10 +590,11 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       return CallbackReturn::ERROR;
     }
     if (interaction_amplitude_m_ <= 0.0 || interaction_move_duration_sec_ <= 0.0 ||
-        interaction_hold_duration_sec_ < 0.0 || interaction_publish_rate_hz_ <= 0.0) {
+        interaction_hold_duration_sec_ < 0.0 || interaction_publish_rate_hz_ <= 0.0 ||
+        interaction_resistance_force_threshold_n_ <= 0.0) {
       RCLCPP_ERROR(get_node()->get_logger(),
-                   "Interaction amplitude/move duration/publish rate must be positive, "
-                   "and hold duration must be non-negative.");
+                   "Interaction amplitude/move duration/publish rate/resistance force threshold "
+                   "must be positive, and hold duration must be non-negative.");
       return CallbackReturn::ERROR;
     }
     roll_midpoint_ratio_ = std::clamp(roll_midpoint_ratio_, 0.1, 0.9);
@@ -862,16 +868,21 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       return;
     }
 
-    const double raw_force_y = franka_robot_state_msg_.o_f_ext_hat_k.wrench.force.y;
+    const Eigen::Vector3d raw_force(
+        franka_robot_state_msg_.o_f_ext_hat_k.wrench.force.x,
+        franka_robot_state_msg_.o_f_ext_hat_k.wrench.force.y,
+        franka_robot_state_msg_.o_f_ext_hat_k.wrench.force.z);
     if (!external_force_initialized_) {
-      external_force_y_filtered_ = raw_force_y;
+      external_force_filtered_ = raw_force;
       external_force_initialized_ = true;
     } else {
-      external_force_y_filtered_ =
-          external_force_filter_alpha_ * raw_force_y +
-          (1.0 - external_force_filter_alpha_) * external_force_y_filtered_;
+      external_force_filtered_ =
+          external_force_filter_alpha_ * raw_force +
+          (1.0 - external_force_filter_alpha_) * external_force_filtered_;
     }
-    external_force_y_raw_ = raw_force_y;
+    external_force_raw_ = raw_force;
+    external_force_y_raw_ = raw_force.y();
+    external_force_y_filtered_ = external_force_filtered_.y();
     external_force_valid_ = true;
   }
 
@@ -1140,6 +1151,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     grasp_succeeded_ = false;
     board_contact_force_baseline_valid_ = false;
     board_contact_settle_start_time_ = -1.0;
+    interaction_force_baseline_valid_ = false;
+    interaction_skip_action_ = {false, false};
     if (!homing_goal_sent_) {
       send_homing_goal();
     }
@@ -1472,6 +1485,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     initial_robot_time_ = robot_time_;
     interaction_recording_active_ = true;
     interaction_action_index_ = -1;
+    interaction_force_baseline_valid_ = false;
+    interaction_skip_action_ = {false, false};
     last_interaction_publish_time_ = -1.0;
     commanded_position_ = interaction_base_position_;
     commanded_orientation_ = interaction_base_orientation_;
@@ -1510,6 +1525,9 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     };
     auto apply_move = [&](const Eigen::Vector3d& start, const Eigen::Vector3d& goal,
                           int action, double duration) -> bool {
+      if (interaction_skip_action_.at(action)) {
+        return false;
+      }
       if (elapsed_time < segment_start + duration) {
         const double alpha = compute_progress(elapsed_time - segment_start, duration);
         commanded_position_ = interpolate_position(start, goal, alpha);
@@ -1530,6 +1548,33 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
                      apply_move(y_positive, y_negative, 1, move) ||
                      apply_move(y_negative, center, 1, move) ||
                      apply_hold(hold);
+
+    if (segment_active && action_index >= 0) {
+      if (interaction_action_index_ != action_index || !interaction_force_baseline_valid_) {
+        interaction_force_baseline_ = external_force_filtered_;
+        interaction_force_baseline_valid_ = external_force_valid_;
+      } else if (external_force_valid_) {
+        const double resistance_force_n =
+            (external_force_filtered_ - interaction_force_baseline_).norm();
+        if (resistance_force_n >= interaction_resistance_force_threshold_n_) {
+          interaction_skip_action_.at(action_index) = true;
+          interaction_force_baseline_valid_ = false;
+          initial_robot_time_ = robot_time_;
+          commanded_position_ = center;
+          interaction_action_index_ = -1;
+          publish_interaction_state(current_position, -1, true, true);
+          RCLCPP_WARN(
+              get_node()->get_logger(),
+              "Interaction resistance %.3f N exceeded threshold %.3f N during target tcp.%c "
+              "perturbation. Returning to center and skipping the rest of this direction.",
+              resistance_force_n, interaction_resistance_force_threshold_n_,
+              action_index == 0 ? 'x' : 'y');
+          return;
+        }
+      }
+    } else if (action_index < 0) {
+      interaction_force_baseline_valid_ = false;
+    }
 
     if (!segment_active) {
       commanded_position_ = center;
@@ -1813,7 +1858,13 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   double interaction_move_duration_sec_{3.0};
   double interaction_hold_duration_sec_{0.5};
   double interaction_publish_rate_hz_{30.0};
+  double interaction_resistance_force_threshold_n_{6.0};
   double last_interaction_publish_time_{-1.0};
+  Eigen::Vector3d external_force_raw_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d external_force_filtered_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d interaction_force_baseline_{Eigen::Vector3d::Zero()};
+  bool interaction_force_baseline_valid_{false};
+  std::array<bool, 2> interaction_skip_action_{{false, false}};
   bool board_contact_force_baseline_valid_{false};
   double board_contact_force_baseline_y_{0.0};
   double board_contact_probe_start_time_{0.0};

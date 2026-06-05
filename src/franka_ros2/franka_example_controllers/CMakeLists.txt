@@ -106,6 +106,7 @@ install(
 install(
         PROGRAMS
         ${CABLE_INTERACT_DIR}/pointcloud_tools/multigrasp_orchestrator.py
+        ${CABLE_INTERACT_DIR}/pointcloud_tools/multigrasp_3090_worker.py
         DESTINATION lib/${PROJECT_NAME}
 )
 
