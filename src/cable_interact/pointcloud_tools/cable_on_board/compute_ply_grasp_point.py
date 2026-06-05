@@ -4,6 +4,7 @@ import argparse
 import json
 import heapq
 import html
+import random
 import re
 import webbrowser
 from pathlib import Path
@@ -138,8 +139,78 @@ def build_knn_graph(points: np.ndarray, neighbor_count: int) -> tuple[list[list[
     return graph, filtered_points
 
 
+def build_knn_graph_components(
+    points: np.ndarray,
+    neighbor_count: int,
+    max_edge_length: float | None,
+    min_component_points: int = 8,
+) -> list[tuple[list[list[tuple[int, float]]], np.ndarray]]:
+    if len(points) < 2:
+        raise ValueError("At least two points are required to build the skeleton graph.")
+
+    n_neighbors = min(max(2, neighbor_count), len(points) - 1)
+    tree = cKDTree(points)
+    distances, indices = tree.query(points, k=n_neighbors + 1)
+
+    edge_weights: dict[tuple[int, int], float] = {}
+    for src in range(len(points)):
+        for dst, distance in zip(indices[src, 1:], distances[src, 1:]):
+            dst = int(dst)
+            edge_distance = float(distance)
+            if src == dst:
+                continue
+            if max_edge_length is not None and edge_distance > max_edge_length:
+                continue
+            key = (src, dst) if src < dst else (dst, src)
+            if key not in edge_weights or edge_distance < edge_weights[key]:
+                edge_weights[key] = edge_distance
+
+    if not edge_weights:
+        raise ValueError("Failed to build any skeleton graph edges. Increase --component-edge-threshold.")
+
+    row_indices = []
+    col_indices = []
+    weights = []
+    for (src, dst), edge_distance in edge_weights.items():
+        row_indices.extend([src, dst])
+        col_indices.extend([dst, src])
+        weights.extend([edge_distance, edge_distance])
+
+    adjacency = coo_matrix((weights, (row_indices, col_indices)), shape=(len(points), len(points)))
+    components = connected_components_from_adjacency(adjacency)
+    graph_components: list[tuple[list[list[tuple[int, float]]], np.ndarray]] = []
+
+    for component in components:
+        if len(component) < min_component_points:
+            continue
+        index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(component)}
+        component_points = points[component]
+        graph: list[list[tuple[int, float]]] = [[] for _ in range(len(component_points))]
+        for (src, dst), edge_distance in edge_weights.items():
+            if src in index_map and dst in index_map:
+                new_src = index_map[src]
+                new_dst = index_map[dst]
+                graph[new_src].append((new_dst, edge_distance))
+                graph[new_dst].append((new_src, edge_distance))
+        if any(graph):
+            graph_components.append((graph, component_points))
+
+    if not graph_components:
+        raise ValueError("No skeleton graph components survived filtering.")
+
+    graph_components.sort(key=lambda item: len(item[1]), reverse=True)
+    return graph_components
+
+
 def extract_skeleton_path(points: np.ndarray, neighbor_count: int) -> np.ndarray:
     graph, filtered_points = build_knn_graph(points, neighbor_count)
+    return extract_skeleton_path_from_graph(graph, filtered_points)
+
+
+def extract_skeleton_path_from_graph(
+    graph: list[list[tuple[int, float]]],
+    filtered_points: np.ndarray,
+) -> np.ndarray:
     mst_graph = compute_minimum_spanning_tree(graph)
 
     endpoint_a, _, _ = tree_dijkstra(mst_graph, 0)
@@ -150,6 +221,17 @@ def extract_skeleton_path(points: np.ndarray, neighbor_count: int) -> np.ndarray
     if len(skeleton) < 2:
         raise ValueError("Failed to extract a valid skeleton path from the point cloud.")
     return skeleton
+
+
+def extract_skeleton_paths(
+    points: np.ndarray,
+    neighbor_count: int,
+    max_edge_length: float | None,
+) -> list[np.ndarray]:
+    skeletons: list[np.ndarray] = []
+    for graph, component_points in build_knn_graph_components(points, neighbor_count, max_edge_length):
+        skeletons.append(extract_skeleton_path_from_graph(graph, component_points))
+    return skeletons
 
 
 def connected_components_from_adjacency(adjacency: coo_matrix) -> list[list[int]]:
@@ -448,6 +530,18 @@ def estimate_default_voxel_size(points: np.ndarray) -> float:
     return max(median_spacing * 2.0, 1e-4)
 
 
+def estimate_component_edge_threshold(points: np.ndarray, voxel_size: float) -> float:
+    if len(points) < 2:
+        return max(voxel_size * 3.0, 0.006)
+
+    sample_count = min(len(points), 3000)
+    sample = points[:sample_count]
+    tree = cKDTree(sample)
+    distances, _ = tree.query(sample, k=2)
+    median_spacing = float(np.median(distances[:, 1]))
+    return max(voxel_size * 3.0, median_spacing * 5.0, 0.006)
+
+
 def project_onto_plane(vector: np.ndarray, plane_normal: np.ndarray) -> np.ndarray:
     return vector - np.dot(vector, plane_normal) * plane_normal
 
@@ -507,7 +601,50 @@ def build_board_target_gripper_frame(grasp_point: np.ndarray, gripper_direction:
     }
 
 
-def compute_grasp_point(
+def build_grasp_candidate(
+    points: np.ndarray,
+    skeleton: np.ndarray,
+    arc_length: float,
+    label: str,
+    component_index: int,
+    endpoint_label: str,
+    selected_gripper_direction: str,
+    tangent_window_half_length: float,
+) -> dict:
+    selected_pregrasp_point = sample_polyline_points_by_arc_lengths(skeleton, [arc_length])[0]
+    local_tangent, local_tangent_segment, local_tangent_window = compute_tangent_from_arc_window(
+        skeleton,
+        arc_length,
+        tangent_window_half_length,
+    )
+    gripper_direction_a, gripper_direction_b = compute_opposite_gripper_directions(local_tangent)
+    grasp_point, projection_distance = project_to_point_cloud(selected_pregrasp_point, points)
+
+    selected_label = selected_gripper_direction.lower()
+    if selected_label not in {"a", "b"}:
+        raise ValueError("selected_gripper_direction must be 'a' or 'b'.")
+    selected_direction = gripper_direction_a if selected_label == "a" else gripper_direction_b
+    target_frame = build_board_target_gripper_frame(grasp_point, selected_direction, selected_label)
+
+    candidate = {
+        "label": label,
+        "component_index": int(component_index),
+        "endpoint_label": endpoint_label,
+        "arc_length": float(arc_length),
+        "pregrasp_point": selected_pregrasp_point.tolist(),
+        "grasp_point": grasp_point.tolist(),
+        "projection_distance": float(projection_distance),
+        "local_tangent": local_tangent.tolist(),
+        "local_tangent_segment": local_tangent_segment.tolist(),
+        "local_tangent_window_arc_lengths": [local_tangent_window[0], local_tangent_window[1]],
+        "gripper_direction_a": gripper_direction_a.tolist(),
+        "gripper_direction_b": gripper_direction_b.tolist(),
+    }
+    candidate.update(target_frame)
+    return candidate
+
+
+def compute_grasp_point_single_cable_legacy(
     ply_path: Path,
     voxel_size: float | None,
     neighbor_count: int,
@@ -574,6 +711,137 @@ def compute_grasp_point(
     return result
 
 
+def compute_grasp_point(
+    ply_path: Path,
+    voxel_size: float | None,
+    neighbor_count: int,
+    selected_pregrasp_label: int = 3,
+    selected_gripper_direction: str = "a",
+    tangent_window_half_length: float = 0.01,
+    endpoint_offset: float = 0.10,
+    component_edge_threshold: float | None = None,
+    random_seed: int | None = None,
+    single_cable_legacy: bool = False,
+) -> dict:
+    if single_cable_legacy:
+        return compute_grasp_point_single_cable_legacy(
+            ply_path,
+            voxel_size,
+            neighbor_count,
+            selected_pregrasp_label,
+            selected_gripper_direction,
+            tangent_window_half_length,
+        )
+
+    points = parse_ascii_ply_vertices(ply_path)
+    effective_voxel_size = estimate_default_voxel_size(points) if voxel_size is None else voxel_size
+    downsampled_points = voxel_downsample(points, effective_voxel_size)
+    effective_component_edge_threshold = (
+        estimate_component_edge_threshold(downsampled_points, effective_voxel_size)
+        if component_edge_threshold is None
+        else component_edge_threshold
+    )
+    skeletons = extract_skeleton_paths(
+        downsampled_points,
+        neighbor_count,
+        effective_component_edge_threshold,
+    )
+
+    candidates: list[dict] = []
+    for component_index, skeleton in enumerate(skeletons, start=1):
+        arc_lengths = compute_polyline_arc_lengths(skeleton)
+        total_length = float(arc_lengths[-1])
+        if total_length <= 1e-6:
+            continue
+
+        inward_offset = min(float(endpoint_offset), total_length * 0.5)
+        endpoint_specs = [
+            ("start", inward_offset),
+            ("end", total_length - inward_offset),
+        ]
+        for endpoint_label, arc_length in endpoint_specs:
+            label = f"C{component_index}-{endpoint_label}"
+            candidates.append(
+                build_grasp_candidate(
+                    points,
+                    skeleton,
+                    arc_length,
+                    label,
+                    component_index,
+                    endpoint_label,
+                    selected_gripper_direction,
+                    tangent_window_half_length,
+                )
+            )
+
+    if not candidates:
+        raise ValueError("No multi-cable grasp candidates were found.")
+
+    rng = random.Random(random_seed)
+    selected_candidate_index = rng.randrange(len(candidates))
+    selected_candidate = candidates[selected_candidate_index]
+    target_frame = {
+        key: selected_candidate[key]
+        for key in [
+            "selected_gripper_frame_status",
+            "selected_gripper_direction_label",
+            "selected_gripper_frame_position",
+            "selected_gripper_direction",
+            "selected_tcp_x_axis",
+            "selected_tcp_y_axis",
+            "selected_tcp_z_axis",
+            "selected_tcp_quaternion_xyzw",
+        ]
+    }
+
+    skeleton_arc_lengths = [compute_polyline_arc_lengths(skeleton) for skeleton in skeletons]
+    skeleton_total_lengths = [float(lengths[-1]) for lengths in skeleton_arc_lengths]
+    skeleton_midpoints = [compute_polyline_midpoint(skeleton).tolist() for skeleton in skeletons]
+    pregrasp_points = [candidate["grasp_point"] for candidate in candidates]
+    pregrasp_segment_labels = [candidate["label"] for candidate in candidates]
+
+    result = {
+        "mode": "multi_cable_endpoint_offset",
+        "ply_path": str(ply_path),
+        "point_count": int(len(points)),
+        "downsampled_point_count": int(len(downsampled_points)),
+        "voxel_size": float(effective_voxel_size),
+        "neighbor_count": int(neighbor_count),
+        "component_edge_threshold": float(effective_component_edge_threshold),
+        "skeleton_count": int(len(skeletons)),
+        "skeleton_point_count": int(sum(len(skeleton) for skeleton in skeletons)),
+        "skeleton": skeletons[0].tolist(),
+        "skeletons": [skeleton.tolist() for skeleton in skeletons],
+        "skeleton_midpoint": skeleton_midpoints[0],
+        "skeleton_midpoints": skeleton_midpoints,
+        "skeleton_total_length": skeleton_total_lengths[0],
+        "skeleton_total_lengths": skeleton_total_lengths,
+        "endpoint_offset_m": float(endpoint_offset),
+        "local_tangent": selected_candidate["local_tangent"],
+        "local_tangent_method": "arc_window_pca",
+        "local_tangent_window_half_length": float(tangent_window_half_length),
+        "local_tangent_window_arc_lengths": selected_candidate["local_tangent_window_arc_lengths"],
+        "local_tangent_segment": selected_candidate["local_tangent_segment"],
+        "pregrasp_segment_count": len(candidates),
+        "pregrasp_segment_labels": pregrasp_segment_labels,
+        "selected_pregrasp_label": selected_candidate["label"],
+        "selected_grasp_candidate_index": int(selected_candidate_index),
+        "selected_grasp_candidate": selected_candidate,
+        "grasp_candidates": candidates,
+        "pregrasp_points": pregrasp_points,
+        "gripper_direction_a": selected_candidate["gripper_direction_a"],
+        "gripper_direction_b": selected_candidate["gripper_direction_b"],
+        "gripper_directions": [
+            selected_candidate["gripper_direction_a"],
+            selected_candidate["gripper_direction_b"],
+        ],
+        "grasp_point": selected_candidate["grasp_point"],
+        "projection_distance": float(selected_candidate["projection_distance"]),
+    }
+    result.update(target_frame)
+    return result
+
+
 def extract_cable_id(ply_path: Path) -> str:
     for part in ply_path.parts:
         match = re.fullmatch(r"cable_(\d+)", part)
@@ -599,10 +867,14 @@ def _project_xz(point: Sequence[float]) -> list[float]:
 def build_visualization_html(result: dict) -> str:
     points = np.asarray(parse_ascii_ply_vertices(Path(result["ply_path"])), dtype=np.float64)
     skeleton = np.asarray(result.get("skeleton", []), dtype=np.float64)
+    skeletons = result.get("skeletons")
+    if skeletons is None:
+        skeletons = [skeleton.tolist()] if len(skeleton) else []
     step = max(1, len(points) // 6000)
     payload = {
         "points": points[::step].tolist(),
         "skeleton": skeleton.tolist(),
+        "skeletons": skeletons,
         "grasp_point": result["grasp_point"],
         "gripper_direction_a": result["gripper_direction_a"],
         "gripper_direction_b": result["gripper_direction_b"],
@@ -610,24 +882,30 @@ def build_visualization_html(result: dict) -> str:
         "pregrasp_points": result.get("pregrasp_points", []),
         "pregrasp_segment_labels": result.get("pregrasp_segment_labels", []),
         "selected_pregrasp_label": result.get("selected_pregrasp_label"),
+        "grasp_candidates": result.get("grasp_candidates", []),
         "selected_tcp_x_axis": result.get("selected_tcp_x_axis", [1.0, 0.0, 0.0]),
         "selected_tcp_y_axis": result.get("selected_tcp_y_axis", [0.0, 0.0, 1.0]),
         "selected_tcp_z_axis": result.get("selected_tcp_z_axis", [0.0, 1.0, 0.0]),
     }
     payload_json = json.dumps(payload, separators=(",", ":"))
     metadata_rows = {
+        "mode": result.get("mode", "single_cable_legacy"),
         "ply_path": result["ply_path"],
         "point_count": result["point_count"],
         "downsampled_point_count": result["downsampled_point_count"],
         "voxel_size": f'{result["voxel_size"]:.6f}',
+        "component_edge_threshold_m": result.get("component_edge_threshold"),
+        "skeleton_count": result.get("skeleton_count", 1),
         "skeleton_point_count": result["skeleton_point_count"],
         "projection_distance_m": f'{result["projection_distance"]:.6f}',
         "grasp_point": [round(float(v), 6) for v in result["grasp_point"]],
         "local_tangent": [round(float(v), 6) for v in result["local_tangent"]],
         "local_tangent_method": result.get("local_tangent_method"),
         "local_tangent_window_half_length_m": result.get("local_tangent_window_half_length"),
+        "endpoint_offset_m": result.get("endpoint_offset_m"),
         "pregrasp_segment_count": result.get("pregrasp_segment_count"),
         "selected_pregrasp_label": result.get("selected_pregrasp_label"),
+        "selected_grasp_candidate_index": result.get("selected_grasp_candidate_index"),
         "selected_gripper_direction_label": result.get("selected_gripper_direction_label"),
         "selected_tcp_x_axis": [round(float(v), 6) for v in result.get("selected_tcp_x_axis", [])],
         "selected_tcp_y_axis": [round(float(v), 6) for v in result.get("selected_tcp_y_axis", [])],
@@ -688,7 +966,8 @@ def build_visualization_html(result: dict) -> str:
     const ctx = canvas.getContext('2d');
     let yaw = -0.85, pitch = 0.35, zoom = 1.0;
     let dragging = false, lastX = 0, lastY = 0;
-    const all = payload.points.concat(payload.skeleton, [payload.grasp_point]);
+    const skeletonPoints = (payload.skeletons || [payload.skeleton]).flat();
+    const all = payload.points.concat(skeletonPoints, [payload.grasp_point]);
     const center = [0, 0, 0];
     for (const p of all) {{ center[0] += p[0]; center[1] += p[1]; center[2] += p[2]; }}
     center[0] /= all.length; center[1] /= all.length; center[2] /= all.length;
@@ -724,7 +1003,10 @@ def build_visualization_html(result: dict) -> str:
       const sorted = payload.points.map(p => [p, project(p)[2]]).sort((a,b) => a[1]-b[1]);
       ctx.fillStyle = 'rgba(229,231,235,0.58)';
       for (const [p] of sorted) {{ const q = project(p); ctx.beginPath(); ctx.arc(q[0], q[1], 1.25, 0, Math.PI*2); ctx.fill(); }}
-      if (payload.skeleton.length > 1) {{ ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); const first = project(payload.skeleton[0]); ctx.moveTo(first[0], first[1]); for (const p of payload.skeleton.slice(1)) {{ const q = project(p); ctx.lineTo(q[0], q[1]); }} ctx.stroke(); }}
+      const skeletonList = payload.skeletons || [payload.skeleton];
+      for (const skel of skeletonList) {{
+        if (skel.length > 1) {{ ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); const first = project(skel[0]); ctx.moveTo(first[0], first[1]); for (const p of skel.slice(1)) {{ const q = project(p); ctx.lineTo(q[0], q[1]); }} ctx.stroke(); }}
+      }}
       if (payload.local_tangent_segment && payload.local_tangent_segment.length > 1) {{ ctx.strokeStyle = '#fde047'; ctx.lineWidth = 5; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath(); const firstLocal = project(payload.local_tangent_segment[0]); ctx.moveTo(firstLocal[0], firstLocal[1]); for (const p of payload.local_tangent_segment.slice(1)) {{ const q = project(p); ctx.lineTo(q[0], q[1]); }} ctx.stroke(); }}
       const g = payload.grasp_point;
       drawLine(g, endpoint(g, payload.gripper_direction_a, 0.12), '#f97316', 5, 'A');
@@ -742,8 +1024,9 @@ def build_visualization_html(result: dict) -> str:
           ctx.fillStyle = label === payload.selected_pregrasp_label ? '#fde047' : '#fca5a5';
           ctx.strokeStyle = 'rgba(17,24,39,0.9)';
           ctx.lineWidth = 3;
-          ctx.strokeText(`P${{label}}`, q[0] + 8, q[1] - 8);
-          ctx.fillText(`P${{label}}`, q[0] + 8, q[1] - 8);
+          ctx.beginPath(); ctx.arc(q[0], q[1], label === payload.selected_pregrasp_label ? 6 : 4, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+          ctx.strokeText(`${{label}}`, q[0] + 8, q[1] - 8);
+          ctx.fillText(`${{label}}`, q[0] + 8, q[1] - 8);
         }}
       }}
       const gp = project(g); ctx.fillStyle = '#2563eb'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(gp[0], gp[1], 7, 0, Math.PI*2); ctx.fill(); ctx.stroke();
@@ -766,8 +1049,8 @@ def write_visualization_html(viewer_path: Path, result: dict) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Estimate a grasp point for a cable-like PLY point cloud by extracting a 3D skeleton "
-            "curve and selecting the midpoint along its arc length."
+            "Estimate grasp candidates for one or more cable-like PLY point-cloud skeletons. "
+            "By default, each skeleton endpoint contributes one candidate 10 cm inward."
         )
     )
     parser.add_argument("ply_path", type=Path, help="Absolute path to the ASCII .ply file.")
@@ -786,7 +1069,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-viewer",
         action="store_true",
-        help="Generate a lightweight HTML viewer and open it in the default browser.",
+        help="Open the generated interactive HTML viewer in the default browser.",
     )
     parser.add_argument(
         "--viewer-path",
@@ -800,7 +1083,30 @@ def parse_args() -> argparse.Namespace:
         default=3,
         choices=range(1, 10),
         metavar="{1..9}",
-        help="Which boundary point P1..P9 to use after dividing the cable skeleton into 10 equal arc-length segments.",
+        help="Legacy single-cable mode only: which boundary point P1..P9 to use after dividing the cable skeleton into 10 equal arc-length segments.",
+    )
+    parser.add_argument(
+        "--endpoint-offset",
+        type=float,
+        default=0.10,
+        help="Multi-cable mode: distance in meters to move inward from each skeleton endpoint. Default is 0.10 m.",
+    )
+    parser.add_argument(
+        "--component-edge-threshold",
+        type=float,
+        default=None,
+        help="Optional maximum kNN edge length in meters before splitting skeleton components. Defaults to an auto-estimated value.",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=None,
+        help="Optional seed for randomly selecting one candidate to save as the active grasp point.",
+    )
+    parser.add_argument(
+        "--single-cable-legacy",
+        action="store_true",
+        help="Use the old single-cable P1..P9 grasp selection path.",
     )
     parser.add_argument(
         "--tangent-window-half-length",
@@ -827,6 +1133,10 @@ def main() -> None:
         raise ValueError("--neighbors must be at least 2.")
     if args.tangent_window_half_length <= 0.0:
         raise ValueError("--tangent-window-half-length must be greater than 0.")
+    if args.endpoint_offset <= 0.0:
+        raise ValueError("--endpoint-offset must be greater than 0.")
+    if args.component_edge_threshold is not None and args.component_edge_threshold <= 0.0:
+        raise ValueError("--component-edge-threshold must be greater than 0.")
 
     result = compute_grasp_point(
         args.ply_path,
@@ -835,17 +1145,21 @@ def main() -> None:
         args.selected_pregrasp_label,
         args.selected_gripper_direction,
         args.tangent_window_half_length,
+        args.endpoint_offset,
+        args.component_edge_threshold,
+        args.random_seed,
+        args.single_cable_legacy,
     )
     output_path = build_output_path(args.ply_path)
     output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     viewer_path = args.viewer_path if args.viewer_path is not None else build_viewer_output_path(args.ply_path)
+    write_visualization_html(viewer_path, result)
     if args.show_viewer:
-        write_visualization_html(viewer_path, result)
         webbrowser.open(viewer_path.resolve().as_uri())
     print(json.dumps(result, indent=2))
     print(f"Saved grasp point to: {output_path}")
-    if args.show_viewer:
-        print(f"Saved viewer to: {viewer_path}")
+    print(f"Saved viewer to: {viewer_path}")
+    print(f"Open viewer URL: {viewer_path.resolve().as_uri()}")
 
 
 if __name__ == "__main__":

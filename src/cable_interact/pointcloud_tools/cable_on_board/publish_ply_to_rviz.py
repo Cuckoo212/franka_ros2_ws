@@ -30,6 +30,7 @@ DEFAULT_SELECTED_DIRECTION_LENGTH = 0.22
 DEFAULT_AXIS_LENGTH = 0.10
 DEFAULT_TARGET_TCP_FRAME_ID = "target_tcp_frame"
 DEFAULT_CANDIDATE_TCP_FRAME_PREFIX = "candidate_tcp_frame"
+DEFAULT_CANDIDATE_LABEL_PREFIX = "candidate_"
 LINK0_Y_AXIS = [0.0, 1.0, 0.0]
 LINK0_X_AXIS = [1.0, 0.0, 0.0]
 LINK0_NEG_Z_AXIS = [0.0, 0.0, -1.0]
@@ -113,6 +114,20 @@ def build_tcp_axes_from_x_direction(x_direction: Sequence[float]) -> dict:
     }
 
 
+def safe_label_equals(left, right) -> bool:
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+def sanitize_frame_token(value) -> str:
+    sanitized = "".join(
+        char if char.isalnum() or char == "_" else "_"
+        for char in str(value)
+    ).strip("_")
+    return sanitized or "unnamed"
+
+
 def load_grasp_plan(grasp_plan_path: Path) -> dict:
     data = json.loads(grasp_plan_path.read_text(encoding="utf-8"))
     grasp_point = data["grasp_point"]
@@ -142,9 +157,35 @@ def load_grasp_plan(grasp_plan_path: Path) -> dict:
             continue
         valid_pregrasp_points.append([float(value) for value in point])
         if index < len(pregrasp_segment_labels):
-            valid_pregrasp_labels.append(int(pregrasp_segment_labels[index]))
+            valid_pregrasp_labels.append(str(pregrasp_segment_labels[index]))
         else:
-            valid_pregrasp_labels.append(index + 1)
+            valid_pregrasp_labels.append(str(index + 1))
+
+    grasp_candidates = []
+    for index, candidate in enumerate(data.get("grasp_candidates", [])):
+        candidate_point = candidate.get("grasp_point")
+        direction = candidate.get("selected_tcp_x_axis") or candidate.get("selected_gripper_direction")
+        if direction is None and "gripper_direction_a" in candidate:
+            direction = candidate["gripper_direction_a"]
+        if not candidate_point or not direction or len(candidate_point) != 3 or len(direction) != 3:
+            continue
+        candidate_axes = {
+            "selected_tcp_x_axis": candidate.get("selected_tcp_x_axis"),
+            "selected_tcp_y_axis": candidate.get("selected_tcp_y_axis"),
+            "selected_tcp_z_axis": candidate.get("selected_tcp_z_axis"),
+        }
+        if any(candidate_axes[key] is None or len(candidate_axes[key]) != 3 for key in candidate_axes):
+            candidate_axes = build_tcp_axes_from_x_direction(direction)
+        grasp_candidates.append(
+            {
+                "label": str(candidate.get("label", f"{DEFAULT_CANDIDATE_LABEL_PREFIX}{index}")),
+                "grasp_point": [float(value) for value in candidate_point],
+                "selected_tcp_x_axis": [float(value) for value in candidate_axes["selected_tcp_x_axis"]],
+                "selected_tcp_y_axis": [float(value) for value in candidate_axes["selected_tcp_y_axis"]],
+                "selected_tcp_z_axis": [float(value) for value in candidate_axes["selected_tcp_z_axis"]],
+                "selected_gripper_direction": [float(value) for value in direction],
+            }
+        )
 
     return {
         "grasp_point": [float(value) for value in grasp_point],
@@ -152,6 +193,7 @@ def load_grasp_plan(grasp_plan_path: Path) -> dict:
         "pregrasp_points": valid_pregrasp_points,
         "pregrasp_segment_labels": valid_pregrasp_labels,
         "selected_pregrasp_label": data.get("selected_pregrasp_label"),
+        "grasp_candidates": grasp_candidates,
     }
 
 
@@ -164,8 +206,6 @@ def load_selected_gripper_frame(grasp_plan_path: Path) -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     if data.get("selected_gripper_frame_status") != "selected":
-        return None
-    if "selected_estimated_joint7" not in data:
         return None
 
     required_keys = [
@@ -270,7 +310,7 @@ def build_vector_marker_array(
     for index, point in enumerate(pregrasp_points):
         label = pregrasp_segment_labels[index] if index < len(pregrasp_segment_labels) else index + 1
         pregrasp_marker.points.append(build_point(point))
-        if selected_pregrasp_label is not None and int(label) == int(selected_pregrasp_label):
+        if safe_label_equals(label, selected_pregrasp_label):
             pregrasp_marker.colors.append(build_color(0.15, 0.39, 0.92, 1.0))
         else:
             pregrasp_marker.colors.append(build_color(1.0, 0.63, 0.16, 0.95))
@@ -280,9 +320,9 @@ def build_vector_marker_array(
         label = pregrasp_segment_labels[index] if index < len(pregrasp_segment_labels) else index + 1
         label_marker = Marker()
         add_marker_text_common(label_marker, frame_id, stamp, "candidate_grasp_point_labels", 20 + index)
-        label_marker.text = f"P{label}"
+        label_marker.text = str(label)
         label_marker.pose.position = build_point([point[0], point[1], point[2] + 0.018])
-        if selected_pregrasp_label is not None and int(label) == int(selected_pregrasp_label):
+        if safe_label_equals(label, selected_pregrasp_label):
             label_marker.color.r = 0.15
             label_marker.color.g = 0.39
             label_marker.color.b = 0.92
@@ -516,6 +556,28 @@ def build_candidate_tcp_transforms(
     return transforms
 
 
+def build_grasp_candidate_tcp_transforms(
+    frame_id: str,
+    stamp,
+    grasp_candidates: list[dict],
+) -> list[TransformStamped]:
+    transforms = []
+    for index, candidate in enumerate(grasp_candidates):
+        label = sanitize_frame_token(candidate.get("label", index))
+        transforms.append(
+            build_tcp_transform_from_axes(
+                frame_id,
+                f"{DEFAULT_CANDIDATE_TCP_FRAME_PREFIX}_{label}",
+                stamp,
+                candidate["grasp_point"],
+                candidate["selected_tcp_x_axis"],
+                candidate["selected_tcp_y_axis"],
+                candidate["selected_tcp_z_axis"],
+            )
+        )
+    return transforms
+
+
 def parse_ascii_ply_vertices(ply_path: Path) -> List[Sequence[float]]:
     with ply_path.open("r", encoding="utf-8") as ply_file:
         lines = ply_file.readlines()
@@ -721,12 +783,19 @@ class PlyCloudPublisher(Node):
                 )
             self._vector_marker_publisher.publish(marker_array)
             if self._grasp_plan is not None:
-                candidate_tcp_transforms = build_candidate_tcp_transforms(
-                    self._frame_id,
-                    header.stamp,
-                    self._grasp_plan["grasp_point"],
-                    self._grasp_plan["gripper_directions"],
-                )
+                if self._grasp_plan.get("grasp_candidates"):
+                    candidate_tcp_transforms = build_grasp_candidate_tcp_transforms(
+                        self._frame_id,
+                        header.stamp,
+                        self._grasp_plan["grasp_candidates"],
+                    )
+                else:
+                    candidate_tcp_transforms = build_candidate_tcp_transforms(
+                        self._frame_id,
+                        header.stamp,
+                        self._grasp_plan["grasp_point"],
+                        self._grasp_plan["gripper_directions"],
+                    )
                 if candidate_tcp_transforms:
                     self._dynamic_tf_broadcaster.sendTransform(candidate_tcp_transforms)
                 target_tcp_transform = build_target_tcp_transform(
