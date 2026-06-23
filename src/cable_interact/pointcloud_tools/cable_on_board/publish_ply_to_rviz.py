@@ -7,9 +7,9 @@ from typing import List, Sequence
 
 import rclpy
 from geometry_msgs.msg import Point
+from geometry_msgs.msg import TransformStamped
 from rclpy.node import Node
 from rclpy.executors import ExternalShutdownException
-from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import ColorRGBA, Header
@@ -24,6 +24,7 @@ DEFAULT_RATE_HZ = 2.0
 DEFAULT_CALIB_FILE = Path("/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib")
 DEFAULT_PLY_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint")
 DEFAULT_CAMERA_TOPIC = "/ply_cloud_camera_frame"
+DEFAULT_CAMERA_FRAME_ID = "camera_color_frame"
 DEFAULT_VECTOR_MARKER_TOPIC = "/cable_grasp_vectors"
 DEFAULT_DIRECTION_LENGTH = 0.16
 DEFAULT_SELECTED_DIRECTION_LENGTH = 0.22
@@ -675,7 +676,7 @@ class PlyCloudPublisher(Node):
         rate_hz: float,
         camera_ply_path: Path | None = None,
         camera_topic: str = "/ply_cloud_camera_frame",
-        camera_frame_id: str | None = None,
+        camera_frame_id: str | None = DEFAULT_CAMERA_FRAME_ID,
         calib_path: Path | None = None,
         grasp_plan_path: Path | None = None,
         additional_grasp_plan_path: Path | None = None,
@@ -700,9 +701,8 @@ class PlyCloudPublisher(Node):
         self._static_tf_broadcaster = StaticTransformBroadcaster(self)
         self._dynamic_tf_broadcaster = TransformBroadcaster(self)
 
-        if self._camera_frame_id is None and calib_path is not None:
-            _, child_frame, _, _ = load_calibration(calib_path)
-            self._camera_frame_id = child_frame
+        if calib_path is not None:
+            self.publish_camera_tf(calib_path)
 
         if grasp_plan_path is not None and grasp_plan_path.is_file():
             self._grasp_plan = load_grasp_plan(grasp_plan_path)
@@ -738,9 +738,6 @@ class PlyCloudPublisher(Node):
                 f"Loaded {len(self._camera_points)} points from {camera_ply_path} "
                 f"and publishing on {camera_topic} in frame {self._camera_frame_id}."
             )
-        if calib_path is not None:
-            self.publish_camera_tf(calib_path)
-
     def publish_cloud(self) -> None:
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
@@ -815,8 +812,7 @@ class PlyCloudPublisher(Node):
 
     def publish_camera_tf(self, calib_path: Path) -> None:
         parent_frame, child_frame, translation, rotation = load_calibration(calib_path)
-        if self._camera_frame_id is None:
-            self._camera_frame_id = child_frame
+        self._camera_frame_id = child_frame
         transform = TransformStamped()
         transform.header.stamp = self.get_clock().now().to_msg()
         transform.header.frame_id = parent_frame
@@ -830,7 +826,7 @@ class PlyCloudPublisher(Node):
         transform.transform.rotation.w = float(rotation["w"])
         self._static_tf_broadcaster.sendTransform(transform)
         self.get_logger().info(
-            f"Published static TF {parent_frame} -> {child_frame} from calibration file {calib_path}."
+            f"Published static camera TF {parent_frame} -> {child_frame} from {calib_path}."
         )
 
 
@@ -882,7 +878,7 @@ def main() -> None:
         DEFAULT_RATE_HZ,
         camera_ply_path,
         DEFAULT_CAMERA_TOPIC,
-        None,
+        DEFAULT_CAMERA_FRAME_ID,
         DEFAULT_CALIB_FILE,
         grasp_plan_path,
         additional_grasp_plan_path,

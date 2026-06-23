@@ -718,9 +718,10 @@ def compute_grasp_point(
     selected_pregrasp_label: int = 3,
     selected_gripper_direction: str = "a",
     tangent_window_half_length: float = 0.01,
-    endpoint_offset: float = 0.10,
+    endpoint_offset: float = 0.20,
     component_edge_threshold: float | None = None,
     random_seed: int | None = None,
+    selected_grasp_label: str | None = "C1-start",
     single_cable_legacy: bool = False,
 ) -> dict:
     if single_cable_legacy:
@@ -777,8 +778,23 @@ def compute_grasp_point(
     if not candidates:
         raise ValueError("No multi-cable grasp candidates were found.")
 
-    rng = random.Random(random_seed)
-    selected_candidate_index = rng.randrange(len(candidates))
+    if selected_grasp_label:
+        selected_candidate_index = next(
+            (
+                index
+                for index, candidate in enumerate(candidates)
+                if str(candidate["label"]).lower() == selected_grasp_label.lower()
+            ),
+            -1,
+        )
+        if selected_candidate_index < 0:
+            candidate_labels = ", ".join(str(candidate["label"]) for candidate in candidates)
+            raise ValueError(
+                f"selected_grasp_label must be one of [{candidate_labels}], got {selected_grasp_label!r}."
+            )
+    else:
+        rng = random.Random(random_seed)
+        selected_candidate_index = rng.randrange(len(candidates))
     selected_candidate = candidates[selected_candidate_index]
     target_frame = {
         key: selected_candidate[key]
@@ -1088,8 +1104,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--endpoint-offset",
         type=float,
-        default=0.10,
-        help="Multi-cable mode: distance in meters to move inward from each skeleton endpoint. Default is 0.10 m.",
+        default=0.20,
+        help="Multi-cable mode: distance in meters to move inward from each skeleton endpoint. Default is 0.20 m.",
+    )
+    parser.add_argument(
+        "--selected-grasp-label",
+        type=str,
+        default="C1-start",
+        help="Multi-cable mode: candidate label to save as the active top-level grasp point. Use an empty string to select randomly.",
     )
     parser.add_argument(
         "--component-edge-threshold",
@@ -1148,6 +1170,7 @@ def main() -> None:
         args.endpoint_offset,
         args.component_edge_threshold,
         args.random_seed,
+        args.selected_grasp_label,
         args.single_cable_legacy,
     )
     output_path = build_output_path(args.ply_path)

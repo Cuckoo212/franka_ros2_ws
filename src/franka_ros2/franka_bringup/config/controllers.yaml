@@ -201,10 +201,15 @@
     ros__parameters:
       gazebo: false
       interaction_enabled: true
-      interaction_amplitude: 0.03
+      interaction_amplitude: 0.06
       interaction_move_duration: 3.0
       interaction_hold_duration: 0.5
       interaction_publish_rate: 30.0
+      interaction_resistance_force_threshold: 10.0
+      close_gripper_with_move: false
+      continue_after_gripper_close_failure: true
       gripper_width: 0.004
       gripper_speed: 0.02
       gripper_force: 10.0
+      gripper_epsilon_inner: 0.004
+      gripper_epsilon_outer: 0.020

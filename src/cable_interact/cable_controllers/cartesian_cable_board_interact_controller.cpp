@@ -477,9 +477,9 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     auto_declare<bool>("gazebo", false);
     auto_declare<std::string>("target_cable_id", "");
     auto_declare<std::vector<double>>("cartesian_stiffness",
-                                      {800.0, 900.0, 1050.0, 35.0, 35.0, 30.0});
+                                      {800.0, 1400.0, 1050.0, 35.0, 35.0, 30.0});
     auto_declare<std::vector<double>>("cartesian_damping",
-                                      {56.7, 60.0, 64.8, 11.8, 11.8, 11.0});
+                                      {56.7, 74.8, 64.8, 11.8, 11.8, 11.0});
     auto_declare<std::vector<double>>("max_torque_deltas",
                                       {0.25, 0.25, 0.22, 0.20, 0.15, 0.12, 0.10});
     auto_declare<double>("max_translation_error", 0.10);
@@ -506,12 +506,14 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     auto_declare<double>("interaction_move_duration", 3.0);
     auto_declare<double>("interaction_hold_duration", 0.5);
     auto_declare<double>("interaction_publish_rate", 30.0);
-    auto_declare<double>("interaction_resistance_force_threshold", 6.0);
+    auto_declare<double>("interaction_resistance_force_threshold", 10.0);
     auto_declare<double>("gripper_width", 0.004);
     auto_declare<double>("gripper_speed", 0.02);
     auto_declare<double>("gripper_force", 10.0);
-    auto_declare<double>("gripper_epsilon_inner", 0.003);
-    auto_declare<double>("gripper_epsilon_outer", 0.003);
+    auto_declare<double>("gripper_epsilon_inner", 0.004);
+    auto_declare<double>("gripper_epsilon_outer", 0.020);
+    auto_declare<bool>("close_gripper_with_move", true);
+    auto_declare<bool>("continue_after_gripper_close_failure", true);
     auto_declare<double>("open_width", 0.08);
     auto_declare<double>("open_speed", 0.05);
     return CallbackReturn::SUCCESS;
@@ -603,6 +605,9 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     gripper_force_ = get_node()->get_parameter("gripper_force").as_double();
     gripper_epsilon_inner_ = get_node()->get_parameter("gripper_epsilon_inner").as_double();
     gripper_epsilon_outer_ = get_node()->get_parameter("gripper_epsilon_outer").as_double();
+    close_gripper_with_move_ = get_node()->get_parameter("close_gripper_with_move").as_bool();
+    continue_after_gripper_close_failure_ =
+        get_node()->get_parameter("continue_after_gripper_close_failure").as_bool();
     open_width_ = get_node()->get_parameter("open_width").as_double();
     open_speed_ = get_node()->get_parameter("open_speed").as_double();
     const auto cartesian_stiffness =
@@ -708,6 +713,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
         get_node(), action_namespace + "/franka_gripper/move");
     assign_homing_goal_options_callbacks();
     assign_move_goal_options_callbacks();
+    assign_close_move_goal_options_callbacks();
     assign_grasp_goal_options_callbacks();
     parameter_callback_handle_ = get_node()->add_on_set_parameters_callback(
         [this](const std::vector<rclcpp::Parameter>& parameters) {
@@ -1450,7 +1456,11 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     commanded_orientation_ = target_orientation_;
 
     if (!grasp_goal_sent_) {
-      send_grasp_goal();
+      if (close_gripper_with_move_) {
+        send_close_move_goal();
+      } else {
+        send_grasp_goal();
+      }
       return;
     }
 
@@ -1465,8 +1475,20 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       }
       RCLCPP_INFO(get_node()->get_logger(), "Gripper closed. Sequence finished.");
     } else {
-      RCLCPP_ERROR(get_node()->get_logger(),
-                   "Gripper close finished without success. Ending while holding target pose.");
+      if (continue_after_gripper_close_failure_) {
+        RCLCPP_WARN(
+            get_node()->get_logger(),
+            "Gripper close reported failure, but continue_after_gripper_close_failure is true. "
+            "Continuing as closed based on the executed close action.");
+        if (interaction_enabled_) {
+          start_cable_interaction_phase();
+          return;
+        }
+        RCLCPP_INFO(get_node()->get_logger(), "Gripper close failure ignored. Sequence finished.");
+      } else {
+        RCLCPP_ERROR(get_node()->get_logger(),
+                     "Gripper close finished without success. Ending while holding target pose.");
+      }
     }
 
     publish_interaction_state(commanded_position_, -1, false, true);
@@ -1631,6 +1653,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     grasp_goal_sent_ = true;
     grasp_result_received_ = false;
     grasp_succeeded_ = false;
+    latest_grasp_current_width_valid_ = false;
 
     auto goal_handle_future =
         gripper_grasp_action_client_->async_send_goal(grasp_goal, grasp_goal_options_);
@@ -1642,8 +1665,42 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     }
 
     RCLCPP_INFO(get_node()->get_logger(),
-                "Submitted gripper close goal: width=%.4f speed=%.3f force=%.1f",
-                gripper_width_, gripper_speed_, gripper_force_);
+                "Submitted gripper close goal: width=%.4f speed=%.3f force=%.1f "
+                "epsilon_inner=%.4f epsilon_outer=%.4f",
+                gripper_width_, gripper_speed_, gripper_force_, gripper_epsilon_inner_,
+                gripper_epsilon_outer_);
+  }
+
+  void send_close_move_goal() {
+    if (!gripper_move_action_client_->wait_for_action_server(std::chrono::seconds(2))) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "Cannot submit close move goal: Move Action server is not available.");
+      grasp_goal_sent_ = false;
+      grasp_result_received_ = true;
+      grasp_succeeded_ = false;
+      return;
+    }
+
+    franka_msgs::action::Move::Goal move_goal;
+    move_goal.width = gripper_width_;
+    move_goal.speed = gripper_speed_;
+
+    grasp_goal_sent_ = true;
+    grasp_result_received_ = false;
+    grasp_succeeded_ = false;
+
+    auto goal_handle_future =
+        gripper_move_action_client_->async_send_goal(move_goal, close_move_goal_options_);
+    if (!goal_handle_future.valid()) {
+      RCLCPP_ERROR(get_node()->get_logger(), "Failed to submit gripper close move goal.");
+      grasp_result_received_ = true;
+      grasp_succeeded_ = false;
+      return;
+    }
+
+    RCLCPP_INFO(get_node()->get_logger(),
+                "Submitted gripper close move goal: width=%.4f speed=%.3f",
+                gripper_width_, gripper_speed_);
   }
 
   void send_homing_goal() {
@@ -1736,6 +1793,37 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
         };
   }
 
+  void assign_close_move_goal_options_callbacks() {
+    close_move_goal_options_.goal_response_callback =
+        [this](const std::shared_ptr<rclcpp_action::ClientGoalHandle<franka_msgs::action::Move>>&
+                   goal_handle) {
+          if (!goal_handle) {
+            grasp_result_received_ = true;
+            grasp_succeeded_ = false;
+            RCLCPP_ERROR(get_node()->get_logger(), "Gripper close move goal was rejected.");
+          } else {
+            RCLCPP_INFO(get_node()->get_logger(), "Gripper close move goal accepted.");
+          }
+        };
+
+    close_move_goal_options_.result_callback =
+        [this](const rclcpp_action::ClientGoalHandle<franka_msgs::action::Move>::WrappedResult&
+                   result) {
+          grasp_result_received_ = true;
+          grasp_succeeded_ =
+              result.code == rclcpp_action::ResultCode::SUCCEEDED && result.result->success;
+
+          if (grasp_succeeded_) {
+            RCLCPP_INFO(get_node()->get_logger(), "Gripper close move succeeded.");
+          } else {
+            const std::string error_message =
+                result.result ? result.result->error : "unknown gripper close move error";
+            RCLCPP_ERROR(get_node()->get_logger(), "Gripper close move failed: %s",
+                         error_message.c_str());
+          }
+        };
+  }
+
   void assign_homing_goal_options_callbacks() {
     homing_goal_options_.goal_response_callback =
         [this](const std::shared_ptr<rclcpp_action::ClientGoalHandle<franka_msgs::action::Homing>>&
@@ -1780,6 +1868,15 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
           }
         };
 
+    grasp_goal_options_.feedback_callback =
+        [this](const std::shared_ptr<rclcpp_action::ClientGoalHandle<franka_msgs::action::Grasp>>&,
+               const std::shared_ptr<const franka_msgs::action::Grasp::Feedback>& feedback) {
+          if (feedback) {
+            latest_grasp_current_width_ = feedback->current_width;
+            latest_grasp_current_width_valid_ = true;
+          }
+        };
+
     grasp_goal_options_.result_callback =
         [this](const rclcpp_action::ClientGoalHandle<franka_msgs::action::Grasp>::WrappedResult&
                    result) {
@@ -1787,13 +1884,29 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
           grasp_succeeded_ = result.code == rclcpp_action::ResultCode::SUCCEEDED &&
                              result.result && result.result->success;
 
+          const bool has_width = latest_grasp_current_width_valid_.load();
+          const double current_width = latest_grasp_current_width_.load();
           if (grasp_succeeded_) {
-            RCLCPP_INFO(get_node()->get_logger(), "Gripper close succeeded.");
+            if (has_width) {
+              RCLCPP_INFO(get_node()->get_logger(),
+                          "Gripper close succeeded. Final reported width %.6f m.",
+                          current_width);
+            } else {
+              RCLCPP_INFO(get_node()->get_logger(),
+                          "Gripper close succeeded. No width feedback was received.");
+            }
           } else {
             const std::string error_message =
                 result.result ? result.result->error : "unknown gripper close error";
-            RCLCPP_ERROR(get_node()->get_logger(), "Gripper close failed: %s",
-                         error_message.c_str());
+            if (has_width) {
+              RCLCPP_ERROR(get_node()->get_logger(),
+                           "Gripper close failed: %s. Final reported width %.6f m.",
+                           error_message.c_str(), current_width);
+            } else {
+              RCLCPP_ERROR(get_node()->get_logger(),
+                           "Gripper close failed: %s. No width feedback was received.",
+                           error_message.c_str());
+            }
           }
         };
   }
@@ -1811,6 +1924,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   rclcpp_action::Client<franka_msgs::action::Homing>::SendGoalOptions homing_goal_options_;
   rclcpp_action::Client<franka_msgs::action::Grasp>::SendGoalOptions grasp_goal_options_;
   rclcpp_action::Client<franka_msgs::action::Move>::SendGoalOptions move_goal_options_;
+  rclcpp_action::Client<franka_msgs::action::Move>::SendGoalOptions close_move_goal_options_;
 
   bool initialization_flag_{true};
   bool is_gazebo_{false};
@@ -1824,6 +1938,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   std::atomic_bool grasp_goal_sent_{false};
   std::atomic_bool grasp_result_received_{false};
   std::atomic_bool grasp_succeeded_{false};
+  std::atomic_bool latest_grasp_current_width_valid_{false};
+  std::atomic<double> latest_grasp_current_width_{0.0};
 
   double initial_robot_time_{0.0};
   double robot_time_{0.0};
@@ -1834,7 +1950,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   double roll_stage2_duration_sec_{8.0};
   double roll_midpoint_ratio_{0.5};
   double move_to_target_duration_sec_{24.0};
-  double target_position_convergence_threshold_m_{0.01};
+  double target_position_convergence_threshold_m_{0.02};
   double target_orientation_convergence_threshold_rad_{0.1};
   bool board_contact_probe_enabled_{true};
   double board_contact_detection_min_progress_{0.85};
@@ -1858,7 +1974,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   double interaction_move_duration_sec_{3.0};
   double interaction_hold_duration_sec_{0.5};
   double interaction_publish_rate_hz_{30.0};
-  double interaction_resistance_force_threshold_n_{6.0};
+  double interaction_resistance_force_threshold_n_{10.0};
   double last_interaction_publish_time_{-1.0};
   Eigen::Vector3d external_force_raw_{Eigen::Vector3d::Zero()};
   Eigen::Vector3d external_force_filtered_{Eigen::Vector3d::Zero()};
@@ -1873,8 +1989,10 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   double gripper_width_{0.004};
   double gripper_speed_{0.02};
   double gripper_force_{10.0};
-  double gripper_epsilon_inner_{0.001};
-  double gripper_epsilon_outer_{0.001};
+  double gripper_epsilon_inner_{0.004};
+  double gripper_epsilon_outer_{0.020};
+  bool close_gripper_with_move_{true};
+  bool continue_after_gripper_close_failure_{true};
   double open_width_{0.08};
   double open_speed_{0.05};
   double current_joint7_position_{0.0};

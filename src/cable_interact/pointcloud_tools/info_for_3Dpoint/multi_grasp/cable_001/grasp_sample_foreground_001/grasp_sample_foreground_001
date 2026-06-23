@@ -1,0 +1,51 @@
+{
+  "camera_frame": "camera_color_frame",
+  "camera_grasp_point": [
+    -0.25556669692008094,
+    0.11690358390310461,
+    0.7466986892533326
+  ],
+  "camera_local_tangent": [
+    0.31683686424998475,
+    0.9111323310952469,
+    0.26353799856031807
+  ],
+  "grasp_point": [
+    0.3893247193114836,
+    0.2099173995263951,
+    0.7751145649168529
+  ],
+  "gripper_direction_sample_count": 36,
+  "gripper_directions": [
+    [
+      -0.41537056371058123,
+      0.0,
+      0.9096522933532097
+    ],
+    [
+      0.41537056371058123,
+      -0.0,
+      -0.9096522933532097
+    ]
+  ],
+  "local_tangent": [
+    -0.41516195996281546,
+    -0.03168864428762653,
+    0.9091954557866233
+  ],
+  "robot_frame": "fr3_link0",
+  "sampled_segment_point_count": 113,
+  "source": "cmcor.recompute_next_grasp",
+  "source_sequence": "2026-06-05-193756",
+  "selected_gripper_frame_status": "selected",
+  "selected_gripper_direction_label": "0",
+  "selected_estimated_joint7": -1.135046147,
+  "selected_joint7_limit_margin": 1.915753853,
+  "selected_joint7_within_limits": true,
+  "selected_gripper_frame_position": [0.389324719, 0.209917400, 0.775114565],
+  "selected_gripper_direction": [-0.415370564, 0.000000000, 0.909652293],
+  "selected_tcp_x_axis": [-0.415370564, 0.000000000, 0.909652293],
+  "selected_tcp_y_axis": [0.909652293, 0.000000000, 0.415370564],
+  "selected_tcp_z_axis": [0.000000000, 1.000000000, 0.000000000]
+
+}

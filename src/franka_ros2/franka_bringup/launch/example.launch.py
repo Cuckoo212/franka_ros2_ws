@@ -197,6 +197,7 @@ def generate_robot_nodes(context):
                     'enable_sync': 'true',
                     'align_depth.enable': 'true',
                     'pointcloud.enable': 'true',
+                    'publish_tf': 'false',
                     'rgb_camera.color_profile': '640x480x30',
                     'depth_module.depth_profile': '640x480x30',
                 }.items(),
