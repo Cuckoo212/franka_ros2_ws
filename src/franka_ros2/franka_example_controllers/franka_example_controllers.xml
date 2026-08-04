@@ -41,6 +41,12 @@
             The cartesian target point board controller moves the end effector smoothly to a fixed target point and then holds it.
         </description>
     </class>
+    <class name="franka_example_controllers/CartesianApriltagPositionController"
+           type="franka_example_controllers::CartesianApriltagPositionController" base_class_type="controller_interface::ControllerInterface">
+        <description>
+            The cartesian AprilTag position controller receives a robot-frame AprilTag PoseStamped target, moves to a hover pose, then moves the gripper TCP to the tag center while aligning with the tag negative Z axis.
+        </description>
+    </class>
     <class name="franka_example_controllers/CartesianTargetPointAirController"
            type="franka_example_controllers::CartesianTargetPointAirController" base_class_type="controller_interface::ControllerInterface">
         <description>

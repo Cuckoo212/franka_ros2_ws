@@ -24,6 +24,42 @@ MASK_NAME = "mask.png"
 PARAMETERS_NAME = "parameters.json"
 
 
+def validate_crop_rect(crop_rect, image_width, image_height):
+    if crop_rect is None:
+        return None
+
+    left, top, width, height = crop_rect
+    if width <= 0 or height <= 0:
+        raise ValueError("Crop width and height must be positive.")
+    if left < 0 or top < 0:
+        raise ValueError("Crop left and top must be non-negative.")
+    if left + width > image_width or top + height > image_height:
+        raise ValueError(
+            "Crop rectangle must fit inside the captured image: "
+            f"left={left}, top={top}, width={width}, height={height}, "
+            f"image={image_width}x{image_height}"
+        )
+    return left, top, width, height
+
+
+def crop_frame(image, crop_rect):
+    if crop_rect is None:
+        return image
+    left, top, width, height = crop_rect
+    return image[top:top + height, left:left + width]
+
+
+def crop_camera_matrix(camera_matrix, crop_rect):
+    if crop_rect is None:
+        return camera_matrix
+
+    left, top, _, _ = crop_rect
+    cropped = [row[:] for row in camera_matrix]
+    cropped[0][2] -= left
+    cropped[1][2] -= top
+    return cropped
+
+
 def next_cable_dir(output_root):
     output_root.mkdir(parents=True, exist_ok=True)
     existing_indices = []
@@ -66,10 +102,20 @@ def parse_args():
         default=300.0,
         help="Timeout for each background SCP upload. Default: 300",
     )
+    parser.add_argument(
+        "--crop",
+        nargs=4,
+        type=int,
+        metavar=("LEFT", "TOP", "WIDTH", "HEIGHT"),
+        help=(
+            "Save only this ROI from the aligned RGB/depth frames. "
+            "The saved camera_matrix principal point is shifted accordingly."
+        ),
+    )
     return parser.parse_args()
 
 
-def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
+def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0, crop_rect=None):
     uploader = (
         ScpTransferQueue(scp_destination, timeout_sec=scp_timeout_sec)
         if scp_destination
@@ -89,13 +135,20 @@ def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
         depth_scale = depth_sensor.get_depth_scale()
 
         intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+        image_width = intr.width
+        image_height = intr.height
+        crop_rect = validate_crop_rect(crop_rect, image_width, image_height)
         camera_matrix = [
             [intr.fx, 0.0, intr.ppx],
             [0.0, intr.fy, intr.ppy],
             [0.0, 0.0, 1.0],
         ]
+        saved_camera_matrix = crop_camera_matrix(camera_matrix, crop_rect)
 
-        print("K =", camera_matrix)
+        print("K =", saved_camera_matrix)
+        if crop_rect is not None:
+            left, top, width, height = crop_rect
+            print(f"Saving crop: left={left}, top={top}, width={width}, height={height}")
         print(f"Saving captures under: {output_root}")
         print("Default multi-grasp layout: info_for_3Dpoint/multi_grasp/cable_XXX")
         print("Press 's' to save a cable frame, or Esc to exit.")
@@ -113,9 +166,11 @@ def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
             color = np.asanyarray(color_frame.get_data())
             depth = np.asanyarray(depth_frame.get_data())
             depth_mm = (depth * depth_scale * 1000).astype(np.uint16)
+            saved_color = crop_frame(color, crop_rect)
+            saved_depth_mm = crop_frame(depth_mm, crop_rect)
 
-            cv2.imshow("color", color)
-            cv2.imshow("depth", cv2.convertScaleAbs(depth, alpha=0.03))
+            cv2.imshow("color", saved_color)
+            cv2.imshow("depth", cv2.convertScaleAbs(saved_depth_mm, alpha=0.03))
 
             key = cv2.waitKey(1)
 
@@ -130,14 +185,22 @@ def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
                 parameters_path = cable_dir / PARAMETERS_NAME
 
                 # Downstream tools expect a mask file next to RGB, depth, and parameters.
-                mask = np.zeros(depth_mm.shape, dtype=np.uint8)
+                mask = np.zeros(saved_depth_mm.shape, dtype=np.uint8)
 
-                cv2.imwrite(str(rgb_path), color)
-                cv2.imwrite(str(depth_path), depth_mm)
+                cv2.imwrite(str(rgb_path), saved_color)
+                cv2.imwrite(str(depth_path), saved_depth_mm)
                 cv2.imwrite(str(mask_path), mask)
 
                 with parameters_path.open("w", encoding="utf-8") as handle:
-                    json.dump({"camera_matrix": camera_matrix}, handle, indent=2)
+                    parameters = {"camera_matrix": saved_camera_matrix}
+                    if crop_rect is not None:
+                        parameters["crop"] = {
+                            "left": crop_rect[0],
+                            "top": crop_rect[1],
+                            "width": crop_rect[2],
+                            "height": crop_rect[3],
+                        }
+                    json.dump(parameters, handle, indent=2)
 
                 print(
                     "Saved "
@@ -158,7 +221,7 @@ def run_capture(output_root, scp_destination="", scp_timeout_sec=300.0):
 
 def main():
     args = parse_args()
-    run_capture(args.output_root, args.scp_destination, args.scp_timeout_sec)
+    run_capture(args.output_root, args.scp_destination, args.scp_timeout_sec, args.crop)
 
 
 if __name__ == "__main__":

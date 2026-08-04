@@ -1,0 +1,15 @@
+procedure of correcting the calibration:
+
+take photo:
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ /usr/bin/python3 -m pointcloud_tools.capture_cable_rgbd   --output-root /home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/samples_calibration/calibration_001  --crop 40 150 520 330
+
+build pointcloud and skeleton:
+(base) flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ /usr/bin/python3 /home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/build_cable_point_cloud.py   --cable-dir /home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/samples_calibration/calibration_001/cable_010   --keep-largest-component
+
+launch the maunal control：
+flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ ros2 launch franka_bringup manual_calibration.launch.py   robot_ip:=192.168.3.112   use_rviz:=true   spawn_manual_controller:=false
+
+record gt and calculate the suggested calibration info:
+(base) flexcycle@flexcycle-HP-Z2-Mini-G5-Workstation:~/franka_ros2_ws/src/cable_interact$ /usr/bin/python3 pointcloud_tools/record_manual_cable_trajectory.py 010
+
+

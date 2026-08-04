@@ -91,6 +91,10 @@ def generate_robot_nodes(context):
         LaunchConfiguration('launch_realsense').perform(context),
         launch_cable_interact_tools,
     )
+    spawn_controller = _resolve_auto_flag(
+        LaunchConfiguration('spawn_controller').perform(context),
+        True,
+    )
     robot_ips = LaunchConfiguration('robot_ips').perform(context)
     configs = load_yaml(config_file)
     nodes = []
@@ -141,6 +145,8 @@ def generate_robot_nodes(context):
             )
             sys.exit(1)
 
+        if not spawn_controller:
+            continue
         if CONTROLLER_EXAMPLE in controller_name:
             # Spawn the example as ros2_control controller
             controller_name = controller_names_vector[index]
@@ -208,7 +214,11 @@ def generate_robot_nodes(context):
         str(config.get('use_rviz', 'false')).lower() == 'true'
         for config in configs.values()
     )
-    if use_config_rviz or launch_cable_interact_tools:
+    use_rviz = _resolve_auto_flag(
+        LaunchConfiguration('use_rviz').perform(context),
+        use_config_rviz or launch_cable_interact_tools,
+    )
+    if use_rviz:
         if launch_cable_interact_tools:
             rviz_config = PathJoinSubstitution(
                 [
@@ -270,6 +280,18 @@ def generate_launch_description():
                 description='Start RealSense for cable interaction. auto starts it when '
                 'a cable interact controller is selected; set false if the '
                 'camera node is already running.',
+            ),
+            DeclareLaunchArgument(
+                'use_rviz',
+                default_value='auto',
+                description='Start RViz. auto follows franka.config.yaml and enables the '
+                'cable RViz configuration when a cable interaction controller is selected.',
+            ),
+            DeclareLaunchArgument(
+                'spawn_controller',
+                default_value='true',
+                description='Spawn the controller selected by controller_names. Set false to '
+                'start the robot and visualization first, then spawn the controller manually.',
             ),
             OpaqueFunction(function=generate_robot_nodes),
         ]

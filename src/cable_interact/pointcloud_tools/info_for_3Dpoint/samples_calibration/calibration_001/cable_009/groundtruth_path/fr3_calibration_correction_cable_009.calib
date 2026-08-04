@@ -1,0 +1,20 @@
+parameters:
+  name: fr3_calibration_apriltag
+  calibration_type: eye_on_base
+  robot_base_frame: fr3_link0
+  robot_effector_frame: fr3_link8
+  tracking_base_frame: camera_color_frame
+  tracking_marker_frame: calibration_apriltag
+  freehand_robot_movement: true
+  move_group_namespace: /
+  move_group: manipulator
+transform:
+  translation:
+    x: 0.3025126965338288
+    y: 0.3074591590640052
+    z: 0.36832524562878866
+  rotation:
+    x: -0.7023788657301469
+    y: 0.710073053332309
+    z: -0.040777370761048565
+    w: -0.028238164614228525

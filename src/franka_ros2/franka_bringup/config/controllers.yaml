@@ -55,6 +55,9 @@
       cartesian_target_point_air_controller:
         type: franka_example_controllers/CartesianTargetPointAirController
 
+      cartesian_apriltag_position_controller:
+        type: franka_example_controllers/CartesianApriltagPositionController
+
       cartesian_cable_trajectory_controller:
         type: franka_example_controllers/CartesianCableTrajectoryController
 
@@ -213,3 +216,51 @@
       gripper_force: 10.0
       gripper_epsilon_inner: 0.004
       gripper_epsilon_outer: 0.020
+/**:
+  cartesian_apriltag_position_controller:
+    ros__parameters:
+      gazebo: false
+      target_pose_topic: /apriltag_target_pose
+      start_approach_topic: /cartesian_apriltag_position_controller/start_approach
+      expected_frame_id: fr3_link0
+      strict_frame_check: true
+      track_target_updates: false
+      close_gripper_on_start: true
+      home_gripper_on_start: false
+      gripper_width: 0.004
+      gripper_speed: 0.02
+      gripper_force: 10.0
+      gripper_epsilon_inner: 0.004
+      gripper_epsilon_outer: 0.020
+      hover_offset:
+        - 0.0
+        - 0.0
+        - -0.15
+      move_to_hover_duration: 20.0
+      move_to_target_duration: 15.0
+      target_position_tolerance: 0.01
+      target_orientation_tolerance: 0.10
+      cartesian_stiffness:
+        - 350.0
+        - 350.0
+        - 450.0
+        - 20.0
+        - 20.0
+        - 18.0
+      cartesian_damping:
+        - 37.0
+        - 37.0
+        - 42.0
+        - 8.0
+        - 8.0
+        - 7.5
+      max_torque_deltas:
+        - 0.08
+        - 0.08
+        - 0.08
+        - 0.07
+        - 0.06
+        - 0.05
+        - 0.04
+      max_translation_error: 0.10
+      max_rotation_error: 0.35

@@ -57,7 +57,11 @@ namespace {
 
 constexpr const char* kGraspPointRoot =
     "/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint";
-const Eigen::Vector3d kHoverApproachOffset(0.0, -0.15, 0.0);
+constexpr const char* kCalibrationSampleRoot =
+    "/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/"
+    "samples_calibration/calibration_001";
+// In the current setup, positive fr3_link0 Y points away from the board.
+const Eigen::Vector3d kHoverApproachOffset(0.0, 0.15, 0.0);
 const Eigen::Vector3d kHoverTargetZAxis = Eigen::Vector3d::UnitY();
 
 struct GraspPlan {
@@ -98,9 +102,23 @@ std::string normalize_cable_id(const std::string& cable_id) {
 
 std::filesystem::path build_grasp_plan_path(const std::string& cable_id) {
   const std::string normalized_cable_id = normalize_cable_id(cable_id);
-  const std::filesystem::path cable_dir =
+  const std::filesystem::path standard_cable_dir =
       std::filesystem::path(kGraspPointRoot) / ("cable_" + normalized_cable_id);
-  return cable_dir / ("grasp_point_cable_" + normalized_cable_id);
+  const std::filesystem::path standard_plan =
+      standard_cable_dir / ("grasp_point_cable_" + normalized_cable_id);
+  if (std::filesystem::is_regular_file(standard_plan)) {
+    return standard_plan;
+  }
+
+  const std::filesystem::path calibration_plan =
+      std::filesystem::path(kCalibrationSampleRoot) / ("cable_" + normalized_cable_id) /
+      ("grasp_point_cable_" + normalized_cable_id);
+  if (std::filesystem::is_regular_file(calibration_plan)) {
+    return calibration_plan;
+  }
+
+  throw std::runtime_error("No grasp plan found. Checked: " + standard_plan.string() +
+                           " and " + calibration_plan.string());
 }
 
 std::string read_text_file(const std::filesystem::path& path) {

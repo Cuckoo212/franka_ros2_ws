@@ -23,6 +23,7 @@ DEFAULT_FRAME_ID = "fr3_link0"
 DEFAULT_RATE_HZ = 2.0
 DEFAULT_CALIB_FILE = Path("/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib")
 DEFAULT_PLY_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint")
+DEFAULT_CALIBRATION_SAMPLE_ROOT = DEFAULT_PLY_ROOT / "samples_calibration/calibration_001"
 DEFAULT_CAMERA_TOPIC = "/ply_cloud_camera_frame"
 DEFAULT_CAMERA_FRAME_ID = "camera_color_frame"
 DEFAULT_VECTOR_MARKER_TOPIC = "/cable_grasp_vectors"
@@ -30,9 +31,12 @@ DEFAULT_DIRECTION_LENGTH = 0.16
 DEFAULT_SELECTED_DIRECTION_LENGTH = 0.22
 DEFAULT_AXIS_LENGTH = 0.10
 DEFAULT_TARGET_TCP_FRAME_ID = "target_tcp_frame"
+DEFAULT_HOVER_TCP_FRAME_ID = "hover_target_frame"
 DEFAULT_CANDIDATE_TCP_FRAME_PREFIX = "candidate_tcp_frame"
+DEFAULT_CANDIDATE_HOVER_FRAME_PREFIX = "candidate_hover_frame"
+DEFAULT_HOVER_DISTANCE = 0.15
 DEFAULT_CANDIDATE_LABEL_PREFIX = "candidate_"
-LINK0_Y_AXIS = [0.0, 1.0, 0.0]
+LINK0_TARGET_Z_AXIS = [0.0, -1.0, 0.0]
 LINK0_X_AXIS = [1.0, 0.0, 0.0]
 LINK0_NEG_Z_AXIS = [0.0, 0.0, -1.0]
 
@@ -63,15 +67,30 @@ def default_grasp_plan_for_cable_dir(cable_dir: Path) -> Path | None:
     return cable_dir / f"grasp_point_cable_{suffix}"
 
 
-def build_grasp_plan_path(cable_id: str) -> Path:
+def resolve_cable_dir(cable_id: str) -> Path:
     relative_path = resolve_relative_grasp_path(cable_id)
     if relative_path is not None:
-        default_plan = default_grasp_plan_for_cable_dir(relative_path)
-        if default_plan is not None and (relative_path.is_dir() or default_plan.is_file()):
-            return default_plan
         return relative_path
+
     normalized_cable_id = normalize_cable_id(cable_id)
-    return DEFAULT_PLY_ROOT / f"cable_{normalized_cable_id}" / f"grasp_point_cable_{normalized_cable_id}"
+    standard_dir = DEFAULT_PLY_ROOT / f"cable_{normalized_cable_id}"
+    calibration_dir = DEFAULT_CALIBRATION_SAMPLE_ROOT / f"cable_{normalized_cable_id}"
+    if (standard_dir / "cable_robot_frame.ply").is_file():
+        return standard_dir
+    if (calibration_dir / "cable_robot_frame.ply").is_file():
+        return calibration_dir
+    return standard_dir
+
+
+def build_grasp_plan_path(cable_id: str) -> Path:
+    cable_dir = resolve_cable_dir(cable_id)
+    if resolve_relative_grasp_path(cable_id) is not None:
+        default_plan = default_grasp_plan_for_cable_dir(cable_dir)
+        if default_plan is not None and (cable_dir.is_dir() or default_plan.is_file()):
+            return default_plan
+        return cable_dir
+    normalized_cable_id = normalize_cable_id(cable_id)
+    return cable_dir / f"grasp_point_cable_{normalized_cable_id}"
 
 
 def vector_norm(vector: Sequence[float]) -> float:
@@ -103,7 +122,7 @@ def project_onto_plane(vector: Sequence[float], plane_normal: Sequence[float]) -
 
 
 def build_tcp_axes_from_x_direction(x_direction: Sequence[float]) -> dict:
-    z_axis = normalize_vector(LINK0_Y_AXIS, LINK0_Y_AXIS)
+    z_axis = normalize_vector(LINK0_TARGET_Z_AXIS, LINK0_TARGET_Z_AXIS)
     x_axis = normalize_vector(project_onto_plane(x_direction, z_axis), LINK0_X_AXIS)
     y_axis = normalize_vector(cross(z_axis, x_axis), LINK0_NEG_Z_AXIS)
     x_axis = normalize_vector(cross(y_axis, z_axis), x_axis)
@@ -250,6 +269,16 @@ def endpoint(origin: Sequence[float], direction: Sequence[float], length: float)
     return [float(origin[i]) + length * float(direction[i]) for i in range(3)]
 
 
+def hover_position_from_target(
+    target_position: Sequence[float], target_z_axis: Sequence[float]
+) -> list[float]:
+    z_axis = normalize_vector(target_z_axis, LINK0_TARGET_Z_AXIS)
+    return [
+        float(target_position[index]) - DEFAULT_HOVER_DISTANCE * z_axis[index]
+        for index in range(3)
+    ]
+
+
 def add_marker_text_common(marker: Marker, frame_id: str, stamp, ns: str, marker_id: int) -> None:
     marker.header.frame_id = frame_id
     marker.header.stamp = stamp
@@ -292,10 +321,66 @@ def build_vector_marker_array(
     candidate_marker.color.g = 0.72
     candidate_marker.color.b = 0.65
     candidate_marker.color.a = 0.95
-    for direction in gripper_directions:
+    direction_colors = [
+        build_color(1.0, 0.45, 0.05, 1.0),
+        build_color(0.05, 0.80, 0.95, 1.0),
+    ]
+    for index, direction in enumerate(gripper_directions[:2]):
+        direction_end = endpoint(grasp_point, direction, DEFAULT_DIRECTION_LENGTH)
         candidate_marker.points.append(grasp_origin)
-        candidate_marker.points.append(build_point(endpoint(grasp_point, direction, DEFAULT_DIRECTION_LENGTH)))
+        candidate_marker.points.append(build_point(direction_end))
+        color = direction_colors[index]
+        candidate_marker.colors.extend([color, color])
+
+        direction_label = Marker()
+        add_marker_text_common(
+            direction_label,
+            frame_id,
+            stamp,
+            "candidate_gripper_direction_labels",
+            100 + index,
+        )
+        direction_label.text = "a" if index == 0 else "b"
+        direction_label.pose.position = build_point(
+            [direction_end[0], direction_end[1], direction_end[2] + 0.018]
+        )
+        direction_label.color = color
+        marker_array.markers.append(direction_label)
     marker_array.markers.append(candidate_marker)
+
+    candidate_hover_axes = Marker()
+    candidate_hover_axes.header.frame_id = frame_id
+    candidate_hover_axes.header.stamp = stamp
+    candidate_hover_axes.ns = "candidate_hover_frames"
+    candidate_hover_axes.id = 110
+    candidate_hover_axes.type = Marker.LINE_LIST
+    candidate_hover_axes.action = Marker.ADD
+    candidate_hover_axes.pose.orientation.w = 1.0
+    candidate_hover_axes.scale.x = 0.004
+    axis_specs = [
+        ("selected_tcp_x_axis", build_color(0.95, 0.20, 0.20), 0.08),
+        ("selected_tcp_y_axis", build_color(0.20, 0.85, 0.25), 0.08),
+        ("selected_tcp_z_axis", build_color(0.20, 0.45, 0.95), 0.10),
+    ]
+    for index, direction in enumerate(gripper_directions[:2]):
+        axes = build_tcp_axes_from_x_direction(direction)
+        hover_position = hover_position_from_target(grasp_point, axes["selected_tcp_z_axis"])
+        for axis_name, color, length in axis_specs:
+            candidate_hover_axes.points.append(build_point(hover_position))
+            candidate_hover_axes.points.append(
+                build_point(endpoint(hover_position, axes[axis_name], length))
+            )
+            candidate_hover_axes.colors.extend([color, color])
+        hover_label = Marker()
+        add_marker_text_common(
+            hover_label, frame_id, stamp, "candidate_hover_frame_labels", 120 + index
+        )
+        hover_label.text = f"hover {'a' if index == 0 else 'b'}"
+        hover_label.pose.position = build_point(
+            [hover_position[0], hover_position[1], hover_position[2] + 0.025 + 0.025 * index]
+        )
+        marker_array.markers.append(hover_label)
+    marker_array.markers.append(candidate_hover_axes)
 
     pregrasp_marker = Marker()
     pregrasp_marker.header.frame_id = frame_id
@@ -405,6 +490,40 @@ def build_vector_marker_array(
         final_label.color.b = 0.27
     marker_array.markers.append(final_label)
 
+    hover_axes_marker = Marker()
+    hover_axes_marker.header.frame_id = frame_id
+    hover_axes_marker.header.stamp = stamp
+    hover_axes_marker.ns = "final_hover_frame"
+    hover_axes_marker.id = 130
+    hover_axes_marker.type = Marker.LINE_LIST
+    hover_axes_marker.action = Marker.ADD if selected_frame is not None else Marker.DELETE
+    hover_axes_marker.pose.orientation.w = 1.0
+    hover_axes_marker.scale.x = 0.005
+    hover_frame_position = None
+    if selected_frame is not None:
+        hover_frame_position = hover_position_from_target(
+            selected_frame["position"], selected_frame["selected_tcp_z_axis"]
+        )
+        for axis_name, color, length in axis_specs:
+            hover_axes_marker.points.append(build_point(hover_frame_position))
+            hover_axes_marker.points.append(
+                build_point(endpoint(hover_frame_position, selected_frame[axis_name], length))
+            )
+            hover_axes_marker.colors.extend([color, color])
+    marker_array.markers.append(hover_axes_marker)
+
+    hover_frame_label = Marker()
+    add_marker_text_common(
+        hover_frame_label, frame_id, stamp, "final_hover_frame_label", 131
+    )
+    hover_frame_label.action = Marker.ADD if hover_frame_position is not None else Marker.DELETE
+    hover_frame_label.text = "hover target (-Z 15 cm)"
+    if hover_frame_position is not None:
+        hover_frame_label.pose.position = build_point(
+            [hover_frame_position[0], hover_frame_position[1], hover_frame_position[2] + 0.035]
+        )
+    marker_array.markers.append(hover_frame_label)
+
     return marker_array
 
 
@@ -510,6 +629,28 @@ def build_target_tcp_transform(
     return transform
 
 
+def build_hover_tcp_transform(
+    frame_id: str,
+    child_frame_id: str,
+    stamp,
+    selected_frame: dict | None,
+) -> TransformStamped | None:
+    if selected_frame is None:
+        return None
+    position = hover_position_from_target(
+        selected_frame["position"], selected_frame["selected_tcp_z_axis"]
+    )
+    return build_tcp_transform_from_axes(
+        frame_id,
+        child_frame_id,
+        stamp,
+        position,
+        selected_frame["selected_tcp_x_axis"],
+        selected_frame["selected_tcp_y_axis"],
+        selected_frame["selected_tcp_z_axis"],
+    )
+
+
 def build_tcp_transform_from_axes(
     frame_id: str,
     child_frame_id: str,
@@ -549,6 +690,32 @@ def build_candidate_tcp_transforms(
                 f"{DEFAULT_CANDIDATE_TCP_FRAME_PREFIX}_{index}",
                 stamp,
                 grasp_point,
+                axes["selected_tcp_x_axis"],
+                axes["selected_tcp_y_axis"],
+                axes["selected_tcp_z_axis"],
+            )
+        )
+    return transforms
+
+
+def build_candidate_hover_transforms(
+    frame_id: str,
+    stamp,
+    grasp_point: Sequence[float],
+    gripper_directions: list[Sequence[float]],
+) -> list[TransformStamped]:
+    transforms = []
+    for index, direction in enumerate(gripper_directions[:2]):
+        axes = build_tcp_axes_from_x_direction(direction)
+        hover_position = hover_position_from_target(
+            grasp_point, axes["selected_tcp_z_axis"]
+        )
+        transforms.append(
+            build_tcp_transform_from_axes(
+                frame_id,
+                f"{DEFAULT_CANDIDATE_HOVER_FRAME_PREFIX}_{index}",
+                stamp,
+                hover_position,
                 axes["selected_tcp_x_axis"],
                 axes["selected_tcp_y_axis"],
                 axes["selected_tcp_z_axis"],
@@ -655,12 +822,7 @@ def load_calibration(calib_path: Path):
 
 
 def build_cable_paths(cable_id: str) -> tuple[Path, Path]:
-    relative_path = resolve_relative_grasp_path(cable_id)
-    if relative_path is not None:
-        cable_dir = relative_path
-    else:
-        normalized_cable_id = normalize_cable_id(cable_id)
-        cable_dir = DEFAULT_PLY_ROOT / f"cable_{normalized_cable_id}"
+    cable_dir = resolve_cable_dir(cable_id)
 
     robot_ply_path = cable_dir / "cable_robot_frame.ply"
     camera_ply_path = cable_dir / "cable_camera_frame.ply"
@@ -780,29 +942,40 @@ class PlyCloudPublisher(Node):
                 )
             self._vector_marker_publisher.publish(marker_array)
             if self._grasp_plan is not None:
-                if self._grasp_plan.get("grasp_candidates"):
-                    candidate_tcp_transforms = build_grasp_candidate_tcp_transforms(
-                        self._frame_id,
-                        header.stamp,
-                        self._grasp_plan["grasp_candidates"],
-                    )
-                else:
-                    candidate_tcp_transforms = build_candidate_tcp_transforms(
-                        self._frame_id,
-                        header.stamp,
-                        self._grasp_plan["grasp_point"],
-                        self._grasp_plan["gripper_directions"],
-                    )
-                if candidate_tcp_transforms:
-                    self._dynamic_tf_broadcaster.sendTransform(candidate_tcp_transforms)
+                candidate_tcp_transforms = build_candidate_tcp_transforms(
+                    self._frame_id,
+                    header.stamp,
+                    self._grasp_plan["grasp_point"],
+                    self._grasp_plan["gripper_directions"],
+                )
+                candidate_hover_transforms = build_candidate_hover_transforms(
+                    self._frame_id,
+                    header.stamp,
+                    self._grasp_plan["grasp_point"],
+                    self._grasp_plan["gripper_directions"],
+                )
+                candidate_transforms = candidate_tcp_transforms + candidate_hover_transforms
+                if candidate_transforms:
+                    self._dynamic_tf_broadcaster.sendTransform(candidate_transforms)
                 target_tcp_transform = build_target_tcp_transform(
                     self._frame_id,
                     self._target_tcp_frame_id,
                     header.stamp,
                     selected_frame,
                 )
-                if target_tcp_transform is not None:
-                    self._dynamic_tf_broadcaster.sendTransform(target_tcp_transform)
+                hover_tcp_transform = build_hover_tcp_transform(
+                    self._frame_id,
+                    DEFAULT_HOVER_TCP_FRAME_ID,
+                    header.stamp,
+                    selected_frame,
+                )
+                selected_transforms = [
+                    transform
+                    for transform in [target_tcp_transform, hover_tcp_transform]
+                    if transform is not None
+                ]
+                if selected_transforms:
+                    self._dynamic_tf_broadcaster.sendTransform(selected_transforms)
         if self._camera_points is not None and self._camera_publisher is not None:
             camera_header = Header()
             camera_header.stamp = header.stamp

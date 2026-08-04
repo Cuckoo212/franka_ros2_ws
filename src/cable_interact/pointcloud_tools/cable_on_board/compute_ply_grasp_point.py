@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import List, Sequence
 
 import numpy as np
+from scipy.ndimage import binary_closing, binary_dilation
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import minimum_spanning_tree
 from scipy.spatial import cKDTree
+from skimage.morphology import remove_small_objects, skeletonize
 
 
 Y_AXIS = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+TARGET_TCP_Z_AXIS = np.array([0.0, -1.0, 0.0], dtype=np.float64)
 X_AXIS = np.array([1.0, 0.0, 0.0], dtype=np.float64)
 
 
@@ -232,6 +235,171 @@ def extract_skeleton_paths(
     for graph, component_points in build_knn_graph_components(points, neighbor_count, max_edge_length):
         skeletons.append(extract_skeleton_path_from_graph(graph, component_points))
     return skeletons
+
+
+def prune_short_graph_branches(
+    graph: list[list[tuple[int, float]]],
+    minimum_branch_length: float,
+) -> list[list[tuple[int, float]]]:
+    """Remove short leaf-to-junction spurs while preserving the MST topology."""
+    adjacency = [dict(neighbors) for neighbors in graph]
+    if minimum_branch_length <= 0.0:
+        return [list(neighbors.items()) for neighbors in adjacency]
+
+    changed = True
+    while changed:
+        changed = False
+        leaves = [node for node, neighbors in enumerate(adjacency) if len(neighbors) == 1]
+        removals: set[int] = set()
+        for leaf in leaves:
+            if leaf in removals or len(adjacency[leaf]) != 1:
+                continue
+            branch = [leaf]
+            length = 0.0
+            previous = -1
+            current = leaf
+            while True:
+                next_nodes = [node for node in adjacency[current] if node != previous]
+                if len(next_nodes) != 1:
+                    break
+                next_node = next_nodes[0]
+                length += float(adjacency[current][next_node])
+                previous, current = current, next_node
+                if len(adjacency[current]) != 2:
+                    break
+                branch.append(current)
+
+            # Do not delete an entire short component whose two ends meet here.
+            if len(adjacency[current]) >= 3 and length < minimum_branch_length:
+                removals.update(branch)
+
+        if removals:
+            changed = True
+            for node in removals:
+                for neighbor in list(adjacency[node]):
+                    adjacency[neighbor].pop(node, None)
+                adjacency[node].clear()
+
+    return [list(neighbors.items()) for neighbors in adjacency]
+
+
+def trace_skeleton_from_endpoint(
+    graph: list[list[tuple[int, float]]],
+    points: np.ndarray,
+    endpoint: int,
+) -> np.ndarray:
+    """Trace from one leaf, choosing the straightest continuation at junctions."""
+    path = [endpoint]
+    visited = {endpoint}
+    previous = -1
+    current = endpoint
+
+    while True:
+        candidates = [node for node, _ in graph[current] if node != previous and node not in visited]
+        if not candidates:
+            break
+        if len(candidates) == 1 or previous < 0:
+            next_node = candidates[0]
+        else:
+            incoming = normalize_vector_or(points[current] - points[previous], X_AXIS)
+
+            def continuation_score(node: int) -> float:
+                outgoing = normalize_vector_or(points[node] - points[current], X_AXIS)
+                return float(np.dot(incoming, outgoing))
+
+            next_node = max(candidates, key=continuation_score)
+
+        path.append(next_node)
+        visited.add(next_node)
+        previous, current = current, next_node
+
+    return np.asarray([points[index] for index in path], dtype=np.float64)
+
+
+def extract_all_endpoint_traces(
+    points: np.ndarray,
+    neighbor_count: int,
+    max_edge_length: float | None,
+    minimum_branch_length: float,
+) -> tuple[list[dict], list[np.ndarray]]:
+    """Return every leaf of a pruned, one-pixel-wide board-plane skeleton."""
+    del neighbor_count, max_edge_length  # Kept in the call signature for compatibility.
+
+    board_points = points[:, [0, 2]]
+    pixel_size = min(max(estimate_default_voxel_size(points) * 0.5, 0.001), 0.0015)
+    padding = 4
+    board_min = np.min(board_points, axis=0) - padding * pixel_size
+    pixel_indices = np.rint((board_points - board_min) / pixel_size).astype(np.int64) + padding
+    image_shape = tuple((np.max(pixel_indices, axis=0) + padding + 1).tolist())
+    occupancy = np.zeros(image_shape, dtype=bool)
+    occupancy[pixel_indices[:, 0], pixel_indices[:, 1]] = True
+    occupancy = binary_dilation(occupancy, iterations=1)
+    occupancy = binary_closing(occupancy, iterations=2)
+    occupancy = remove_small_objects(occupancy, min_size=20)
+    skeleton_image = skeletonize(occupancy)
+
+    skeleton_pixels = np.argwhere(skeleton_image)
+    if len(skeleton_pixels) < 2:
+        raise ValueError("Failed to create a board-plane cable skeleton.")
+    pixel_to_node = {tuple(pixel): index for index, pixel in enumerate(skeleton_pixels)}
+    skeleton_board_points = board_min + (skeleton_pixels - padding) * pixel_size
+    board_tree = cKDTree(board_points)
+    _, nearest_indices = board_tree.query(skeleton_board_points, k=1)
+    skeleton_points = points[np.asarray(nearest_indices, dtype=np.int64)].copy()
+    skeleton_points[:, 0] = skeleton_board_points[:, 0]
+    skeleton_points[:, 2] = skeleton_board_points[:, 1]
+
+    graph: list[list[tuple[int, float]]] = [[] for _ in range(len(skeleton_pixels))]
+    for node, pixel in enumerate(skeleton_pixels):
+        for delta_x in (-1, 0, 1):
+            for delta_z in (-1, 0, 1):
+                if delta_x == 0 and delta_z == 0:
+                    continue
+                neighbor = pixel_to_node.get((int(pixel[0] + delta_x), int(pixel[1] + delta_z)))
+                if neighbor is None or neighbor <= node:
+                    continue
+                distance = pixel_size * float(np.hypot(delta_x, delta_z))
+                graph[node].append((neighbor, distance))
+                graph[neighbor].append((node, distance))
+
+    pruned_graph = prune_short_graph_branches(graph, minimum_branch_length)
+    endpoint_records: list[dict] = []
+    display_skeletons: list[np.ndarray] = []
+    component_by_node: dict[int, int] = {}
+    component_index = 0
+    for start, neighbors in enumerate(pruned_graph):
+        if not neighbors or start in component_by_node:
+            continue
+        component_index += 1
+        stack = [start]
+        component_by_node[start] = component_index
+        while stack:
+            node = stack.pop()
+            for neighbor, _ in pruned_graph[node]:
+                if neighbor not in component_by_node:
+                    component_by_node[neighbor] = component_index
+                    stack.append(neighbor)
+
+    endpoints = [index for index, neighbors in enumerate(pruned_graph) if len(neighbors) == 1]
+    for endpoint_index in endpoints:
+        trace = trace_skeleton_from_endpoint(pruned_graph, skeleton_points, endpoint_index)
+        if len(trace) < 2:
+            continue
+        endpoint_records.append(
+            {
+                "component_index": component_by_node[endpoint_index],
+                "endpoint_index": endpoint_index,
+                "endpoint": skeleton_points[endpoint_index],
+                "trace": trace,
+            }
+        )
+        display_skeletons.append(trace)
+
+    # Stable spatial numbering; labels no longer imply cable membership.
+    endpoint_records.sort(
+        key=lambda record: tuple(float(value) for value in record["endpoint"][[0, 2, 1]])
+    )
+    return endpoint_records, display_skeletons
 
 
 def connected_components_from_adjacency(adjacency: coo_matrix) -> list[list[int]]:
@@ -584,7 +752,7 @@ def quaternion_from_axes_np(x_axis: np.ndarray, y_axis: np.ndarray, z_axis: np.n
 
 
 def build_board_target_gripper_frame(grasp_point: np.ndarray, gripper_direction: np.ndarray, label: str) -> dict:
-    z_axis = Y_AXIS.copy()
+    z_axis = TARGET_TCP_Z_AXIS.copy()
     x_axis = project_onto_plane(normalize_vector_or(gripper_direction, X_AXIS), z_axis)
     x_axis = normalize_vector_or(x_axis, X_AXIS)
     y_axis = normalize_vector_or(np.cross(z_axis, x_axis), np.array([0.0, 0.0, 1.0], dtype=np.float64))
@@ -608,7 +776,6 @@ def build_grasp_candidate(
     label: str,
     component_index: int,
     endpoint_label: str,
-    selected_gripper_direction: str,
     tangent_window_half_length: float,
 ) -> dict:
     selected_pregrasp_point = sample_polyline_points_by_arc_lengths(skeleton, [arc_length])[0]
@@ -619,12 +786,6 @@ def build_grasp_candidate(
     )
     gripper_direction_a, gripper_direction_b = compute_opposite_gripper_directions(local_tangent)
     grasp_point, projection_distance = project_to_point_cloud(selected_pregrasp_point, points)
-
-    selected_label = selected_gripper_direction.lower()
-    if selected_label not in {"a", "b"}:
-        raise ValueError("selected_gripper_direction must be 'a' or 'b'.")
-    selected_direction = gripper_direction_a if selected_label == "a" else gripper_direction_b
-    target_frame = build_board_target_gripper_frame(grasp_point, selected_direction, selected_label)
 
     candidate = {
         "label": label,
@@ -640,7 +801,6 @@ def build_grasp_candidate(
         "gripper_direction_a": gripper_direction_a.tolist(),
         "gripper_direction_b": gripper_direction_b.tolist(),
     }
-    candidate.update(target_frame)
     return candidate
 
 
@@ -721,7 +881,7 @@ def compute_grasp_point(
     endpoint_offset: float = 0.20,
     component_edge_threshold: float | None = None,
     random_seed: int | None = None,
-    selected_grasp_label: str | None = "C1-start",
+    selected_grasp_label: str | None = "E1",
     single_cable_legacy: bool = False,
 ) -> dict:
     if single_cable_legacy:
@@ -742,38 +902,46 @@ def compute_grasp_point(
         if component_edge_threshold is None
         else component_edge_threshold
     )
-    skeletons = extract_skeleton_paths(
+    minimum_branch_length = max(float(effective_voxel_size) * 4.0, 0.01)
+    endpoint_records, skeletons = extract_all_endpoint_traces(
         downsampled_points,
         neighbor_count,
         effective_component_edge_threshold,
+        minimum_branch_length,
     )
 
     candidates: list[dict] = []
-    for component_index, skeleton in enumerate(skeletons, start=1):
+    detected_endpoints: list[dict] = []
+    candidate_number = 0
+    for endpoint_number, record in enumerate(endpoint_records, start=1):
+        skeleton = record["trace"]
         arc_lengths = compute_polyline_arc_lengths(skeleton)
         total_length = float(arc_lengths[-1])
-        if total_length <= 1e-6:
+        endpoint_info = {
+            "endpoint_id": f"D{endpoint_number}",
+            "position": record["endpoint"].tolist(),
+            "source_component_index": int(record["component_index"]),
+            "inward_trace_length": total_length,
+            "candidate_available": total_length >= float(endpoint_offset),
+            "candidate_label": None,
+        }
+        detected_endpoints.append(endpoint_info)
+        if total_length < float(endpoint_offset):
             continue
-
-        inward_offset = min(float(endpoint_offset), total_length * 0.5)
-        endpoint_specs = [
-            ("start", inward_offset),
-            ("end", total_length - inward_offset),
-        ]
-        for endpoint_label, arc_length in endpoint_specs:
-            label = f"C{component_index}-{endpoint_label}"
-            candidates.append(
-                build_grasp_candidate(
-                    points,
-                    skeleton,
-                    arc_length,
-                    label,
-                    component_index,
-                    endpoint_label,
-                    selected_gripper_direction,
-                    tangent_window_half_length,
-                )
+        candidate_number += 1
+        label = f"E{candidate_number}"
+        endpoint_info["candidate_label"] = label
+        candidates.append(
+            build_grasp_candidate(
+                points,
+                skeleton,
+                float(endpoint_offset),
+                label,
+                int(record["component_index"]),
+                "endpoint",
+                tangent_window_half_length,
             )
+        )
 
     if not candidates:
         raise ValueError("No multi-cable grasp candidates were found.")
@@ -797,17 +965,8 @@ def compute_grasp_point(
         selected_candidate_index = rng.randrange(len(candidates))
     selected_candidate = candidates[selected_candidate_index]
     target_frame = {
-        key: selected_candidate[key]
-        for key in [
-            "selected_gripper_frame_status",
-            "selected_gripper_direction_label",
-            "selected_gripper_frame_position",
-            "selected_gripper_direction",
-            "selected_tcp_x_axis",
-            "selected_tcp_y_axis",
-            "selected_tcp_z_axis",
-            "selected_tcp_quaternion_xyzw",
-        ]
+        "selected_gripper_frame_status": "pending",
+        "selected_gripper_frame_position": selected_candidate["grasp_point"],
     }
 
     skeleton_arc_lengths = [compute_polyline_arc_lengths(skeleton) for skeleton in skeletons]
@@ -817,13 +976,16 @@ def compute_grasp_point(
     pregrasp_segment_labels = [candidate["label"] for candidate in candidates]
 
     result = {
-        "mode": "multi_cable_endpoint_offset",
+        "mode": "all_skeleton_endpoints_offset",
         "ply_path": str(ply_path),
         "point_count": int(len(points)),
         "downsampled_point_count": int(len(downsampled_points)),
         "voxel_size": float(effective_voxel_size),
         "neighbor_count": int(neighbor_count),
         "component_edge_threshold": float(effective_component_edge_threshold),
+        "minimum_pruned_branch_length": float(minimum_branch_length),
+        "detected_endpoint_count": len(detected_endpoints),
+        "detected_endpoints": detected_endpoints,
         "skeleton_count": int(len(skeletons)),
         "skeleton_point_count": int(sum(len(skeleton) for skeleton in skeletons)),
         "skeleton": skeletons[0].tolist(),
@@ -876,6 +1038,21 @@ def build_viewer_output_path(ply_path: Path) -> Path:
     return ply_path.parent / f"grasp_curve_viewer_cable_{cable_id}.html"
 
 
+def strip_skeleton_fields_for_save(result: dict) -> dict:
+    stripped = dict(result)
+    for key in [
+        "skeleton",
+        "skeletons",
+        "skeleton_midpoint",
+        "skeleton_midpoints",
+        "skeleton_total_length",
+        "skeleton_total_lengths",
+    ]:
+        stripped.pop(key, None)
+    stripped["skeleton_source_path"] = str(Path(result["ply_path"]).parent / "skeleton_from_pc")
+    return stripped
+
+
 def _project_xz(point: Sequence[float]) -> list[float]:
     return [float(point[0]), float(point[2])]
 
@@ -899,6 +1076,7 @@ def build_visualization_html(result: dict) -> str:
         "pregrasp_segment_labels": result.get("pregrasp_segment_labels", []),
         "selected_pregrasp_label": result.get("selected_pregrasp_label"),
         "grasp_candidates": result.get("grasp_candidates", []),
+        "selected_frame_available": result.get("selected_gripper_frame_status") == "selected",
         "selected_tcp_x_axis": result.get("selected_tcp_x_axis", [1.0, 0.0, 0.0]),
         "selected_tcp_y_axis": result.get("selected_tcp_y_axis", [0.0, 0.0, 1.0]),
         "selected_tcp_z_axis": result.get("selected_tcp_z_axis", [0.0, 1.0, 0.0]),
@@ -1027,9 +1205,11 @@ def build_visualization_html(result: dict) -> str:
       const g = payload.grasp_point;
       drawLine(g, endpoint(g, payload.gripper_direction_a, 0.12), '#f97316', 5, 'A');
       drawLine(g, endpoint(g, payload.gripper_direction_b, 0.12), '#06b6d4', 5, 'B');
-      drawLine(g, endpoint(g, payload.selected_tcp_x_axis, 0.08), '#ef4444', 4, 'TCP X');
-      drawLine(g, endpoint(g, payload.selected_tcp_y_axis, 0.08), '#22c55e', 4, 'TCP Y');
-      drawLine(g, endpoint(g, payload.selected_tcp_z_axis, 0.08), '#3b82f6', 4, 'TCP Z');
+      if (payload.selected_frame_available) {{
+        drawLine(g, endpoint(g, payload.selected_tcp_x_axis, 0.08), '#ef4444', 4, 'TCP X');
+        drawLine(g, endpoint(g, payload.selected_tcp_y_axis, 0.08), '#22c55e', 4, 'TCP Y');
+        drawLine(g, endpoint(g, payload.selected_tcp_z_axis, 0.08), '#3b82f6', 4, 'TCP Z');
+      }}
       if (payload.pregrasp_points && payload.pregrasp_segment_labels) {{
         ctx.font = '700 13px Arial';
         ctx.textBaseline = 'bottom';
@@ -1066,7 +1246,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Estimate grasp candidates for one or more cable-like PLY point-cloud skeletons. "
-            "By default, each skeleton endpoint contributes one candidate 10 cm inward."
+            "By default, every detected skeleton endpoint contributes one candidate 20 cm inward."
         )
     )
     parser.add_argument("ply_path", type=Path, help="Absolute path to the ASCII .ply file.")
@@ -1080,7 +1260,7 @@ def parse_args() -> argparse.Namespace:
         "--neighbors",
         type=int,
         default=8,
-        help="k-nearest-neighbor count used to build the point-cloud graph.",
+        help="Legacy single-cable mode: k-nearest-neighbor count used to build the point-cloud graph.",
     )
     parser.add_argument(
         "--show-viewer",
@@ -1110,14 +1290,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--selected-grasp-label",
         type=str,
-        default="C1-start",
-        help="Multi-cable mode: candidate label to save as the active top-level grasp point. Use an empty string to select randomly.",
+        default="E1",
+        help="Multi-cable mode: endpoint candidate label (E1, E2, ...) to save as the active top-level grasp point. Use an empty string to select randomly.",
     )
     parser.add_argument(
         "--component-edge-threshold",
         type=float,
         default=None,
-        help="Optional maximum kNN edge length in meters before splitting skeleton components. Defaults to an auto-estimated value.",
+        help="Deprecated compatibility option; board-plane skeleton mode does not use kNN component edges.",
     )
     parser.add_argument(
         "--random-seed",
@@ -1140,7 +1320,7 @@ def parse_args() -> argparse.Namespace:
         "--selected-gripper-direction",
         choices=("a", "b"),
         default="a",
-        help="Which computed tangent direction to write as the selected target TCP x-axis in the JSON preview.",
+        help="Legacy single-cable mode only. Multi-endpoint mode leaves a/b selection pending for the controller at hover.",
     )
     return parser.parse_args()
 
@@ -1174,7 +1354,7 @@ def main() -> None:
         args.single_cable_legacy,
     )
     output_path = build_output_path(args.ply_path)
-    output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    output_path.write_text(json.dumps(strip_skeleton_fields_for_save(result), indent=2) + "\n", encoding="utf-8")
     viewer_path = args.viewer_path if args.viewer_path is not None else build_viewer_output_path(args.ply_path)
     write_visualization_html(viewer_path, result)
     if args.show_viewer:

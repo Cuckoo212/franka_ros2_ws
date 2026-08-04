@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -15,36 +16,83 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 
 
-DEFAULT_GRASP_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint")
+DEFAULT_INFO_ROOT = Path("/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint")
+DEFAULT_CABLE_ROOT = DEFAULT_INFO_ROOT / "samples_calibration" / "calibration_001"
 DEFAULT_CALIB_FILE = Path("/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration.calib")
+SKELETON_FROM_PC_NAME = "skeleton_from_pc"
 
 
 def normalize_cable_id(cable_id: str) -> str:
     normalized = cable_id.strip()
+    cable_match = re.fullmatch(r"cable_(\d+)", normalized)
+    if cable_match is not None:
+        normalized = cable_match.group(1)
     if normalized.isdigit():
         normalized = f"{int(normalized):03d}"
     return normalized
 
 
-def build_grasp_plan_path(cable_id: str, grasp_root: Path) -> Path:
+def filename_cable_id(cable_id: str) -> str:
+    matches = list(re.finditer(r"cable_(\d+)", cable_id))
+    if matches:
+        return matches[-1].group(1)
+    return normalize_cable_id(Path(cable_id).name)
+
+
+def build_cable_dir(cable_id: str, cable_root: Path) -> Path:
+    stripped = cable_id.strip()
+    if "/" in stripped or "\\" in stripped:
+        relative = Path(stripped)
+        if relative.is_absolute():
+            return relative
+        if ".." in relative.parts:
+            raise ValueError(f"Invalid relative cable id: {cable_id}")
+        resolved = cable_root / relative
+        if resolved.name.startswith("grasp_point_"):
+            return resolved.parent
+        return resolved
+    normalized = normalize_cable_id(cable_id)
+    return cable_root / f"cable_{normalized}"
+
+
+def build_skeleton_path(cable_id: str, cable_root: Path) -> Path:
+    return build_cable_dir(cable_id, cable_root) / SKELETON_FROM_PC_NAME
+
+
+def build_grasp_plan_path(cable_id: str, cable_root: Path) -> Path:
+    cable_dir = build_cable_dir(cable_id, cable_root)
+    cable_match = re.fullmatch(r"cable_(\d+)", cable_dir.name)
+    if cable_match is None:
+        return cable_dir / f"grasp_point_{cable_dir.name}"
+    return cable_dir / f"grasp_point_cable_{cable_match.group(1)}"
+
+
+def build_output_dir(cable_id: str, cable_root: Path) -> Path:
+    return build_cable_dir(cable_id, cable_root) / "groundtruth_path"
+
+
+def legacy_build_skeleton_path(cable_id: str, grasp_root: Path) -> Path:
     stripped = cable_id.strip()
     if "/" in stripped or "\\" in stripped:
         relative = Path(stripped)
         if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"Invalid relative grasp plan id: {cable_id}")
-        return grasp_root / relative
+            raise ValueError(f"Invalid relative cable id: {cable_id}")
+        resolved = grasp_root / relative
+        if resolved.name.startswith("grasp_point_"):
+            return resolved.parent / SKELETON_FROM_PC_NAME
+        return resolved / SKELETON_FROM_PC_NAME
     normalized = normalize_cable_id(cable_id)
-    return grasp_root / f"cable_{normalized}" / f"grasp_point_cable_{normalized}"
+    return grasp_root / f"cable_{normalized}" / SKELETON_FROM_PC_NAME
 
 
-def load_skeleton(grasp_plan_path: Path, y_offset: float) -> np.ndarray:
-    with grasp_plan_path.open("r", encoding="utf-8") as handle:
+def load_skeleton(skeleton_path: Path, y_offset: float) -> np.ndarray:
+    with skeleton_path.open("r", encoding="utf-8") as handle:
         data = json.load(handle)
     if "skeleton" not in data:
-        raise ValueError(f"Missing 'skeleton' field in {grasp_plan_path}")
+        raise ValueError(f"Missing 'skeleton' field in {skeleton_path}")
     skeleton = np.asarray(data["skeleton"], dtype=float)
     if skeleton.ndim != 2 or skeleton.shape[1] != 3 or len(skeleton) < 2:
-        raise ValueError(f"Invalid skeleton in {grasp_plan_path}")
+        raise ValueError(f"Invalid skeleton in {skeleton_path}")
     skeleton = skeleton.copy()
     skeleton[:, 1] += y_offset
     return skeleton
@@ -289,17 +337,16 @@ def analyze_and_save(args: argparse.Namespace, records: list[dict[str, Any]]) ->
         raise RuntimeError("Need at least two recorded TCP points.")
 
     target_id = args.cable_id.strip()
-    grasp_plan_path = build_grasp_plan_path(target_id, args.grasp_root)
-    if "/" in target_id or "\\" in target_id:
-        cable_id = grasp_plan_path.name
-        output_dir = args.output_dir or grasp_plan_path.parent
-    else:
-        cable_id = normalize_cable_id(target_id)
-        output_dir = args.output_dir or (args.grasp_root / f"cable_{cable_id}")
+    cable_dir = build_cable_dir(target_id, args.cable_root)
+    grasp_plan_path = build_grasp_plan_path(target_id, args.cable_root)
+    cable_id = filename_cable_id(target_id)
+    output_dir = args.output_dir or build_output_dir(target_id, args.cable_root)
+    output_cable_id = filename_cable_id(target_id)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     recorded_points = np.asarray([record["position"] for record in records], dtype=float)
-    skeleton = load_skeleton(grasp_plan_path, args.skeleton_y_offset)
+    skeleton_path = args.skeleton_path or build_skeleton_path(target_id, args.cable_root)
+    skeleton = load_skeleton(skeleton_path, args.skeleton_y_offset)
 
     sample_count = min(args.compare_samples, len(remove_duplicate_points(recorded_points)), len(remove_duplicate_points(skeleton)))
     sample_count = max(2, sample_count)
@@ -324,8 +371,10 @@ def analyze_and_save(args: argparse.Namespace, records: list[dict[str, Any]]) ->
 
     report = {
         "cable_id": cable_id,
+        "cable_dir": str(cable_dir),
         "pose_topic": args.pose_topic,
         "grasp_plan_path": str(grasp_plan_path),
+        "skeleton_path": str(skeleton_path),
         "calibration_path": str(args.calib_file) if args.calib_file else None,
         "recorded_point_count": len(records),
         "skeleton_point_count": int(len(skeleton)),
@@ -350,15 +399,15 @@ def analyze_and_save(args: argparse.Namespace, records: list[dict[str, Any]]) ->
         if args.write_updated_calibration:
             updated_path = args.updated_calib_path
             if updated_path is None:
-                updated_path = args.calib_file.with_name(f"{args.calib_file.stem}_manual_cable_{cable_id}.calib")
+                updated_path = output_dir / f"fr3_calibration_correction_cable_{output_cable_id}.calib"
             with updated_path.open("w", encoding="utf-8") as handle:
                 yaml.safe_dump(updated_calib, handle, sort_keys=False)
             report["updated_calibration_path"] = str(updated_path)
 
-    prefix = output_dir / f"manual_tcp_trajectory_cable_{cable_id}"
+    prefix = output_dir / f"gt_cable_seleton_{output_cable_id}"
     json_path = prefix.with_suffix(".json")
     csv_path = prefix.with_suffix(".csv")
-    report_path = output_dir / f"manual_tcp_trajectory_comparison_cable_{cable_id}.json"
+    report_path = output_dir / f"calibration_comparison_cable_{output_cable_id}.json"
 
     with json_path.open("w", encoding="utf-8") as handle:
         json.dump({"cable_id": cable_id, "records": records}, handle, indent=2)
@@ -397,13 +446,31 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Record a hand-guided TCP trajectory during manual calibration and compare it with "
-            "the cable skeleton saved in grasp_point_cable_*."
+            "the point-cloud skeleton saved as skeleton_from_pc."
         )
     )
-    parser.add_argument("cable_id", help="Cable id such as 031, or relative plan id such as multi_grasp/cable_001/grasp_002.")
-    parser.add_argument("--namespace", default="NS_1", help="Robot namespace. Default: NS_1.")
+    parser.add_argument("cable_id", help="Cable id such as 001, cable_001, or a relative cable folder.")
+    parser.add_argument("--namespace", default="", help="Robot namespace. Default: empty.")
     parser.add_argument("--pose-topic", default=None, help="Override current_pose topic.")
-    parser.add_argument("--grasp-root", type=Path, default=DEFAULT_GRASP_ROOT)
+    parser.add_argument(
+        "--cable-root",
+        type=Path,
+        default=DEFAULT_CABLE_ROOT,
+        help=f"Root folder containing cable_XXX folders. Default: {DEFAULT_CABLE_ROOT}",
+    )
+    parser.add_argument(
+        "--grasp-root",
+        dest="cable_root",
+        type=Path,
+        default=argparse.SUPPRESS,
+        help="Deprecated alias for --cable-root.",
+    )
+    parser.add_argument(
+        "--skeleton-path",
+        type=Path,
+        default=None,
+        help="Override point-cloud skeleton path. Defaults to skeleton_from_pc next to the cable/grasp plan.",
+    )
     parser.add_argument("--calib-file", type=Path, default=DEFAULT_CALIB_FILE)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--min-distance", type=float, default=0.001, help="Spatial downsample step in meters.")
@@ -422,7 +489,8 @@ def parse_args() -> argparse.Namespace:
         metavar=("X", "Y", "Z"),
         help="Optional offset from TCP to the physical traced point, expressed in TCP frame.",
     )
-    parser.add_argument("--write-updated-calibration", action="store_true")
+    parser.add_argument("--write-updated-calibration", action="store_true", default=True)
+    parser.add_argument("--no-write-updated-calibration", dest="write_updated_calibration", action="store_false")
     parser.add_argument("--updated-calib-path", type=Path, default=None)
     args = parser.parse_args()
     if args.pose_topic is None:

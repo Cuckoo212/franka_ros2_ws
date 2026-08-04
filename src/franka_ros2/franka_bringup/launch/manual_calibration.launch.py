@@ -40,6 +40,7 @@ def generate_launch_description():
     fake_sensor_commands = LaunchConfiguration('fake_sensor_commands')
     joint_state_rate = LaunchConfiguration('joint_state_rate')
     use_rviz = LaunchConfiguration('use_rviz')
+    launch_realsense = LaunchConfiguration('launch_realsense')
     controllers_yaml = LaunchConfiguration('controllers_yaml')
     controller_name = LaunchConfiguration('controller_name')
     spawn_manual_controller = LaunchConfiguration('spawn_manual_controller')
@@ -77,6 +78,26 @@ def generate_launch_description():
         condition=IfCondition(spawn_manual_controller),
     )
 
+    realsense = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [FindPackageShare('realsense2_camera'), 'launch', 'rs_launch.py']
+            )
+        ),
+        launch_arguments={
+            'camera_namespace': 'camera',
+            'camera_name': 'camera',
+            'enable_color': 'true',
+            'enable_depth': 'true',
+            'enable_sync': 'true',
+            'align_depth.enable': 'true',
+            'pointcloud.enable': 'true',
+            'rgb_camera.color_profile': '640x480x30',
+            'depth_module.depth_profile': '640x480x30',
+        }.items(),
+        condition=IfCondition(launch_realsense),
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -85,9 +106,9 @@ def generate_launch_description():
             '--display-config',
             PathJoinSubstitution(
                 [
-                    FindPackageShare('franka_description'),
+                    FindPackageShare('franka_bringup'),
                     'rviz',
-                    'visualize_franka.rviz',
+                    'cable_interact_realsense.rviz',
                 ]
             ),
         ],
@@ -142,6 +163,11 @@ def generate_launch_description():
                 description='Launch RViz for monitoring TF and robot state.',
             ),
             DeclareLaunchArgument(
+                'launch_realsense',
+                default_value='true',
+                description='Launch RealSense camera topics for calibration monitoring.',
+            ),
+            DeclareLaunchArgument(
                 'controller_name',
                 default_value='gravity_compensation_example_controller',
                 description='Controller used during manual calibration.',
@@ -160,6 +186,7 @@ def generate_launch_description():
             ),
             bringup,
             manual_controller,
+            realsense,
             rviz,
         ]
     )

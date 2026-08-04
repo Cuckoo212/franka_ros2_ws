@@ -644,7 +644,7 @@ def compute_grasp_point(
         "voxel_size": float(effective_voxel_size),
         "neighbor_count": int(neighbor_count),
         "skeleton_point_count": int(len(skeleton)),
-        "filled_skeleton_point_count": int(len(filled_skeleton)),
+        "filled_skeleton_point_count": int(len(filled_skeleton)),<
         "gap_fill_segment_count": int(len(gap_segments)),
         "gap_fill_segments": gap_segments,
         "gap_ratio": float(gap_ratio),

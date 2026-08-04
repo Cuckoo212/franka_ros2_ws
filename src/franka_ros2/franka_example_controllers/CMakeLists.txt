@@ -45,6 +45,7 @@ add_library(
         ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_cable_board_interact_controller.cpp
         ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_target_point_air_controller.cpp
         ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_target_point_board_controller.cpp
+        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_apriltag_position_controller.cpp
         ${CABLE_INTERACT_DIR}/cable_controllers/move_to_start_example_controller.cpp
         src/fr3/cartesian_elbow_example_controller.cpp
         src/fr3/cartesian_orientation_example_controller.cpp

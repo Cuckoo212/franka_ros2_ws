@@ -339,10 +339,18 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        candidate_gripper_directions: true
-        grasp_point: true
-        selected_gripper_direction: true
-        target_tcp_axes: true
+        candidate_grasp_point_labels: true
+        candidate_grasp_points: true
+        candidate_gripper_direction_labels: true
+        candidate_gripper_x_axes: true
+        candidate_hover_frame_labels: true
+        candidate_hover_frames: true
+        final_selected_tcp_x_axis: true
+        final_hover_frame: true
+        final_hover_frame_label: true
+        final_target_tcp_axes: true
+        final_target_tcp_label: true
+        selected_grasp_point: true
       Topic:
         Depth: 5
         Durability Policy: Volatile

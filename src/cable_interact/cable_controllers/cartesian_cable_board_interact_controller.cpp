@@ -60,8 +60,8 @@ namespace {
 
 constexpr const char* kGraspPointRoot =
     "/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint";
-const Eigen::Vector3d kHoverApproachOffset(0.0, -0.15, 0.0);
-const Eigen::Vector3d kHoverTargetZAxis = Eigen::Vector3d::UnitY();
+constexpr double kHoverDistance = 0.15;
+const Eigen::Vector3d kHoverTargetZAxis = -Eigen::Vector3d::UnitY();
 
 struct GraspPlan {
   Eigen::Vector3d grasp_point;
@@ -96,6 +96,17 @@ std::string normalize_cable_id(const std::string& cable_id) {
   std::ostringstream stream;
   stream << std::setw(3) << std::setfill('0') << std::stoi(cable_id);
   return stream.str();
+}
+
+std::string normalize_gripper_direction_selection(std::string selection) {
+  std::transform(selection.begin(), selection.end(), selection.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return selection;
+}
+
+bool is_valid_gripper_direction_selection(const std::string& selection) {
+  return selection == "auto" || selection == "a" || selection == "b";
 }
 
 bool is_relative_grasp_plan_id(const std::string& target_id) {
@@ -200,19 +211,6 @@ void append_selected_gripper_frame_fields_to_grasp_plan(const std::string& cable
   }
 
   write_text_file(grasp_plan_path, prefix + "\n" + fields_json + "\n}\n");
-}
-
-void persist_pending_gripper_frame_asset(const std::string& cable_id,
-                                         const Eigen::Vector3d& target_position) {
-  if (cable_id.empty()) {
-    return;
-  }
-
-  std::ostringstream fields;
-  fields << std::fixed << std::setprecision(9);
-  fields << "  \"selected_gripper_frame_status\": \"pending\",\n";
-  append_json_vector(fields, "selected_gripper_frame_position", target_position, false);
-  append_selected_gripper_frame_fields_to_grasp_plan(cable_id, fields.str());
 }
 
 void persist_selected_gripper_frame_asset(const std::string& cable_id,
@@ -476,6 +474,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     auto_declare<std::string>("arm_prefix", "");
     auto_declare<bool>("gazebo", false);
     auto_declare<std::string>("target_cable_id", "");
+    auto_declare<std::string>("target_gripper_direction", "auto");
     auto_declare<std::vector<double>>("cartesian_stiffness",
                                       {800.0, 1400.0, 1050.0, 35.0, 35.0, 30.0});
     auto_declare<std::vector<double>>("cartesian_damping",
@@ -531,6 +530,14 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     requested_target_cable_id_.clear();
     current_target_cable_id_.clear();
     selected_gripper_direction_label_.clear();
+    requested_target_gripper_direction_ = normalize_gripper_direction_selection(
+        get_node()->get_parameter("target_gripper_direction").as_string());
+    if (!is_valid_gripper_direction_selection(requested_target_gripper_direction_)) {
+      RCLCPP_ERROR(get_node()->get_logger(),
+                   "target_gripper_direction must be 'a', 'b', or 'auto', but got '%s'.",
+                   requested_target_gripper_direction_.c_str());
+      return CallbackReturn::ERROR;
+    }
     motion_duration_sec_ = get_node()->get_parameter("motion_duration").as_double();
     align_y_duration_sec_ = get_node()->get_parameter("align_y_duration").as_double();
     roll_stage1_duration_sec_ =
@@ -960,7 +967,8 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     return build_orientation_from_yz_axes(current_y_axis, kHoverTargetZAxis);
   }
 
-  SelectedGripperDirectionDecision choose_gripper_direction_for_target() const {
+  SelectedGripperDirectionDecision choose_gripper_direction_for_target(
+      const std::string& requested_selection) const {
     const auto [current_hover_orientation, current_hover_position] =
         franka_cartesian_pose_->getCurrentOrientationAndTranslation();
     (void)current_hover_position;
@@ -993,11 +1001,39 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     std::vector<CandidateEvaluation> candidates;
     candidates.reserve(gripper_directions_.size());
     for (std::size_t direction_index = 0; direction_index < gripper_directions_.size(); ++direction_index) {
+      const std::string label = direction_index == 0 ? "a" :
+                                direction_index == 1 ? "b" :
+                                                       std::to_string(direction_index);
       candidates.push_back(
-          evaluate_candidate(gripper_directions_[direction_index], std::to_string(direction_index)));
+          evaluate_candidate(gripper_directions_[direction_index], label));
     }
     if (candidates.empty()) {
       candidates.push_back(evaluate_candidate(Eigen::Vector3d::UnitX(), "fallback"));
+    }
+
+    if (requested_selection == "a" || requested_selection == "b") {
+      const std::size_t requested_index = requested_selection == "a" ? 0U : 1U;
+      if (requested_index >= candidates.size()) {
+        RCLCPP_ERROR(get_node()->get_logger(),
+                     "Requested gripper direction %s, but the grasp plan contains only %zu "
+                     "direction candidate(s). Falling back to candidate %s.",
+                     requested_selection.c_str(), candidates.size(), candidates.front().label.c_str());
+        const auto& fallback = candidates.front();
+        return SelectedGripperDirectionDecision{fallback.direction, fallback.label,
+                                                fallback.estimated_joint7, fallback.limit_margin,
+                                                fallback.within_limits};
+      }
+
+      const auto& selected = candidates[requested_index];
+      RCLCPP_INFO(
+          get_node()->get_logger(),
+          "Using explicitly requested gripper direction %s. Estimated joint7 %.4f rad, "
+          "limits [%.4f, %.4f] (limit optimization bypassed).",
+          selected.label.c_str(), selected.estimated_joint7, joint7_limits_.lower,
+          joint7_limits_.upper);
+      return SelectedGripperDirectionDecision{selected.direction, selected.label,
+                                              selected.estimated_joint7, selected.limit_margin,
+                                              selected.within_limits};
     }
 
     const auto selected_candidate = std::max_element(
@@ -1084,11 +1120,21 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
 
-    Eigen::Vector3d requested_target = requested_target_position_;
-    Eigen::Vector3d requested_gripper_direction = requested_gripper_direction_;
-    std::vector<Eigen::Vector3d> requested_gripper_directions = gripper_directions_;
-    std::string requested_target_cable_id = requested_target_cable_id_;
+    Eigen::Vector3d requested_target;
+    Eigen::Vector3d requested_gripper_direction;
+    std::vector<Eigen::Vector3d> requested_gripper_directions;
+    std::string requested_target_cable_id;
+    std::string requested_target_gripper_direction;
+    {
+      std::lock_guard<std::mutex> lock(target_update_mutex_);
+      requested_target = requested_target_position_;
+      requested_gripper_direction = requested_gripper_direction_;
+      requested_gripper_directions = gripper_directions_;
+      requested_target_cable_id = requested_target_cable_id_;
+      requested_target_gripper_direction = requested_target_gripper_direction_;
+    }
     bool target_changed = false;
+    bool direction_selection_changed = false;
 
     for (const auto& parameter : parameters) {
       if (parameter.get_name() == "target_cable_id") {
@@ -1105,17 +1151,35 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
           result.reason = exception.what();
           return result;
         }
+      } else if (parameter.get_name() == "target_gripper_direction") {
+        requested_target_gripper_direction =
+            normalize_gripper_direction_selection(parameter.as_string());
+        if (!is_valid_gripper_direction_selection(requested_target_gripper_direction)) {
+          result.successful = false;
+          result.reason = "target_gripper_direction must be 'a', 'b', or 'auto'.";
+          return result;
+        }
+        direction_selection_changed = true;
       }
     }
 
-    if (target_changed) {
+    if (target_changed || direction_selection_changed) {
       {
         std::lock_guard<std::mutex> lock(target_update_mutex_);
-        requested_target_position_ = requested_target;
-        requested_gripper_direction_ = requested_gripper_direction;
-        gripper_directions_ = requested_gripper_directions;
-        requested_target_cable_id_ = requested_target_cable_id;
+        requested_target_gripper_direction_ = requested_target_gripper_direction;
+        if (target_changed) {
+          requested_target_position_ = requested_target;
+          requested_gripper_direction_ = requested_gripper_direction;
+          gripper_directions_ = requested_gripper_directions;
+          requested_target_cable_id_ = requested_target_cable_id;
+        }
       }
+    }
+    if (direction_selection_changed) {
+      RCLCPP_INFO(get_node()->get_logger(), "Target gripper direction selection set to '%s'.",
+                  requested_target_gripper_direction.c_str());
+    }
+    if (target_changed) {
       target_update_requested_ = true;
       RCLCPP_INFO(get_node()->get_logger(),
                   "Received new target pose: [%.6f, %.6f, %.6f]",
@@ -1130,11 +1194,13 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       return;
     }
 
+    std::string requested_direction_selection;
     {
       std::lock_guard<std::mutex> lock(target_update_mutex_);
       target_position_ = requested_target_position_;
       selected_gripper_direction_ = requested_gripper_direction_;
       current_target_cable_id_ = requested_target_cable_id_;
+      requested_direction_selection = requested_target_gripper_direction_;
     }
     if (initialization_flag_) {
       return;
@@ -1142,8 +1208,17 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
 
     initial_position_ = commanded_position_;
     initial_orientation_ = commanded_orientation_;
-    hover_position_ = target_position_ + kHoverApproachOffset;
-    hover_orientation_ = compute_hover_orientation();
+    const SelectedGripperDirectionDecision selected_direction_decision =
+        choose_gripper_direction_for_target(requested_direction_selection);
+    selected_gripper_direction_ = selected_direction_decision.direction;
+    selected_gripper_direction_label_ = selected_direction_decision.label;
+    target_orientation_ = compute_target_orientation(initial_orientation_);
+    const Eigen::Vector3d target_z_axis =
+        (target_orientation_ * Eigen::Vector3d::UnitZ()).normalized();
+    // target_position_ and target_z_axis are both expressed in link0. Move
+    // 15 cm opposite the target frame's local +Z axis to obtain the hover pose.
+    hover_position_ = target_position_ - kHoverDistance * target_z_axis;
+    hover_orientation_ = target_orientation_;
     phase_start_time_ = robot_time_;
     motion_phase_ = MotionPhase::kWaitForHoming;
     homing_goal_sent_ = false;
@@ -1163,15 +1238,21 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
       send_homing_goal();
     }
     try {
-      persist_pending_gripper_frame_asset(current_target_cable_id_, target_position_);
+      persist_selected_gripper_frame_asset(current_target_cable_id_, target_position_,
+                                           target_orientation_, selected_direction_decision);
     } catch (const std::exception& exception) {
       RCLCPP_WARN(get_node()->get_logger(),
-                  "Failed to mark selected gripper frame asset as pending: %s",
+                  "Failed to persist selected gripper frame asset: %s",
                   exception.what());
     }
 
-    RCLCPP_INFO(get_node()->get_logger(),
-                "Applying updated target position and starting state machine.");
+    RCLCPP_INFO(
+        get_node()->get_logger(),
+        "Applying target. Selected direction %s; target [%.6f, %.6f, %.6f], "
+        "hover [%.6f, %.6f, %.6f] = target - %.3f * target_z.",
+        selected_gripper_direction_label_.c_str(), target_position_.x(), target_position_.y(),
+        target_position_.z(), hover_position_.x(), hover_position_.y(), hover_position_.z(),
+        kHoverDistance);
   }
 
   void update_wait_for_open_phase() {
@@ -1232,22 +1313,11 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
     if (elapsed_time >= motion_duration_sec_) {
       commanded_position_ = hover_position_;
       commanded_orientation_ = hover_orientation_;
-      const SelectedGripperDirectionDecision selected_direction_decision =
-          choose_gripper_direction_for_target();
-      selected_gripper_direction_ = selected_direction_decision.direction;
-      selected_gripper_direction_label_ = selected_direction_decision.label;
-      target_orientation_ = compute_target_orientation(hover_orientation_);
-      try {
-        persist_selected_gripper_frame_asset(current_target_cable_id_, target_position_,
-                                             target_orientation_, selected_direction_decision);
-      } catch (const std::exception& exception) {
-        RCLCPP_WARN(get_node()->get_logger(),
-                    "Failed to persist selected gripper frame asset: %s", exception.what());
-      }
       phase_start_time_ = robot_time_;
       motion_phase_ = MotionPhase::kPrepareMoveToTarget;
       RCLCPP_INFO(get_node()->get_logger(),
-                  "Reached hover pose. Selected TCP x-axis direction %s [%.4f, %.4f, %.4f].",
+                  "Reached hover pose with target orientation. TCP x-axis direction %s "
+                  "[%.4f, %.4f, %.4f].",
                   selected_gripper_direction_label_.c_str(), selected_gripper_direction_.x(),
                   selected_gripper_direction_.y(),
                   selected_gripper_direction_.z());
@@ -2017,6 +2087,7 @@ class CartesianCableBoardInteractController : public controller_interface::Contr
   std::string robot_type_{"fr3"};
   std::string arm_prefix_;
   std::string requested_target_cable_id_;
+  std::string requested_target_gripper_direction_{"auto"};
   std::string current_target_cable_id_;
   std::string selected_gripper_direction_label_;
   const std::string k_robot_state_interface_name{"robot_state"};
