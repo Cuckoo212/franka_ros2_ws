@@ -1,0 +1,12 @@
+# Example only: replace dimensions and pose with fitted surface geometry.
+# Publish with: ros2 topic pub --once /NS_1/cable_moveit_grasp/obstacles moveit_msgs/msg/CollisionObject "$(cat /absolute/path/obstacle_example.yaml)"
+header:
+  frame_id: fr3_link0
+id: sampled_surface_box
+primitives:
+  - type: 1
+    dimensions: [0.20, 0.10, 0.02]
+primitive_poses:
+  - position: {x: 0.50, y: 0.0, z: 0.10}
+    orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+operation: 0
