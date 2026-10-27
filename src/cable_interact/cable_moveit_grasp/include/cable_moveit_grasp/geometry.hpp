@@ -40,6 +40,45 @@ inline Eigen::Matrix3d candidateRotation(const Eigen::Vector3d& tangent, int sig
   return basis * Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitX()).toRotationMatrix();
 }
 
+// Exact base -Y approach; tangent's Y component must be removed to keep a
+// right-handed orthonormal TCP frame. Reject a cable pointing along approach.
+inline Eigen::Matrix3d boardNormalRotation(const Eigen::Vector3d& tangent, int sign) {
+  if (!tangent.allFinite() || (sign!=1 && sign!=-1))
+    throw std::runtime_error("Invalid board-normal tangent/sign");
+  const Eigen::Vector3d z(0.,-1.,0.);
+  Eigen::Vector3d x=tangent-z*tangent.dot(z);
+  if (x.norm()<1e-6) throw std::runtime_error("Cable tangent is perpendicular to board; no board-normal grasp frame");
+  x=sign*x.normalized();
+  Eigen::Matrix3d rotation;
+  rotation.col(0)=x; rotation.col(1)=z.cross(x); rotation.col(2)=z;
+  return rotation;
+}
+// Height difference measured along base Y to the robot-facing (+Y) box face.
+inline double boardHeightGap(const Eigen::Vector3d& point, const Eigen::Vector3d& center,
+                             const Eigen::Vector3d& normal, double thickness) {
+  if (!point.allFinite() || !center.allFinite() || !normal.allFinite() ||
+      !std::isfinite(thickness) || thickness<=0. || std::abs(normal.y())<1e-6)
+    throw std::runtime_error("Invalid board height geometry");
+  Eigen::Vector3d n=normal.normalized(); if (n.y()<0.) n=-n;
+  return std::abs((n.dot(point-center)-thickness/2.)/n.y());
+}
+inline bool needsBoardNormalGrasp(double gap, double threshold) {
+  if (!std::isfinite(gap) || gap<0. || !std::isfinite(threshold) || threshold<0.)
+    throw std::runtime_error("Invalid board proximity threshold");
+  return gap<=threshold+1e-12;
+}
+
+// Keep the measurement/PCA point intact; offset only the planned TCP target.
+inline Eigen::Vector3d raisedBoardTarget(const Eigen::Vector3d& selected, double gap,
+                                        double threshold, double raise) {
+  if (!selected.allFinite() || !std::isfinite(gap) || gap<0. ||
+      !std::isfinite(threshold) || threshold<0. || !std::isfinite(raise) || raise<0.)
+    throw std::runtime_error("Invalid near-board target offset");
+  Eigen::Vector3d target=selected;
+  if (gap<threshold) target.y()+=raise;
+  return target;
+}
+
 inline double normalizedMargin(double q, double lower, double upper) {
   if (!(upper > lower)) throw std::runtime_error("Invalid joint bounds");
   return std::min(q-lower, upper-q)/(upper-lower);

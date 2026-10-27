@@ -34,5 +34,40 @@ int main() {
   tcp.linear()=cable_grasp::candidateRotation(Eigen::Vector3d::UnitX(),1,1.);
   tool.translation()=Eigen::Vector3d(0,0,.1);
   require(((tcp*tool)*tool.inverse()).matrix().isApprox(tcp.matrix()));
+  for (int sign : {1,-1}) {
+    const auto upright=cable_grasp::boardNormalRotation(Eigen::Vector3d(1.,.2,.5),sign);
+    require(upright.col(2).isApprox(Eigen::Vector3d(0.,-1.,0.)));
+    require(std::abs(upright.col(0).y())<1e-12);
+    require((upright.transpose()*upright).isApprox(Eigen::Matrix3d::Identity()));
+    require(std::abs(upright.determinant()-1.)<1e-12);
+    require(upright.col(0).isApprox(sign*Eigen::Vector3d(1.,0.,.5).normalized()));
+    // Entry lies above target in base +Y for a -Y approach.
+    require((Eigen::Vector3d::Zero()-.04*upright.col(2)).isApprox(Eigen::Vector3d(0.,.04,0.)));
+  }
+  const Eigen::Vector3d center(0.,-.5,0.),normal(0.,1.,0.);
+  require(cable_grasp::needsBoardNormalGrasp(cable_grasp::boardHeightGap(
+      Eigen::Vector3d(.2,-.485,.3),center,normal,.01),.01));
+  require(!cable_grasp::needsBoardNormalGrasp(cable_grasp::boardHeightGap(
+      Eigen::Vector3d(.2,-.4849,.3),center,normal,.01),.01));
+  const Eigen::Vector3d tilted=Eigen::Vector3d(.02,1.,.03).normalized();
+  const Eigen::Vector3d face=center+.005*tilted;
+  require(std::abs(cable_grasp::boardHeightGap(face,center,tilted,.01))<1e-12);
+  rejected=false;
+  try { cable_grasp::boardNormalRotation(Eigen::Vector3d::UnitY(),1); }
+  catch (const std::runtime_error&) {rejected=true;}
+  require(rejected);
+  const Eigen::Vector3d picked(.2,-.51,.6);
+  for (double gap : {0.,.007999}) {
+    const auto raised=cable_grasp::raisedBoardTarget(picked,gap,.008,.005);
+    require(raised.isApprox(picked+Eigen::Vector3d(0.,.005,0.)));
+    require(raised.x()==picked.x() && raised.z()==picked.z());
+    require(cable_grasp::needsBoardNormalGrasp(gap,.01));
+  }
+  for (double gap : {.008,.008001,.02})
+    require(cable_grasp::raisedBoardTarget(picked,gap,.008,.005).isApprox(picked));
+  // Original measured point is unchanged and repeated generation never accumulates offsets.
+  require(picked.isApprox(Eigen::Vector3d(.2,-.51,.6)));
+  require(cable_grasp::raisedBoardTarget(picked,.003,.008,.005).isApprox(
+      cable_grasp::raisedBoardTarget(picked,.003,.008,.005)));
   std::cout<<"Geometry checks passed\n";
 }

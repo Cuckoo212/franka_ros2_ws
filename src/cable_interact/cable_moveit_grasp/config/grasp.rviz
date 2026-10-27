@@ -31,7 +31,7 @@ Visualization Manager:
       Enabled: true
       Topic:
         Value: /cable_camera/cable_points
-        Reliability Policy: Best Effort
+        Reliability Policy: Reliable
         Durability Policy: Volatile
         Depth: 1
       Selectable: true

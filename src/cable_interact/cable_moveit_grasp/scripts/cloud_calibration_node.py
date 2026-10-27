@@ -4,7 +4,7 @@ import copy
 from pathlib import Path
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField
 from geometry_msgs.msg import TransformStamped
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
@@ -31,7 +31,9 @@ class CalibratedCloud(Node):
             raise ValueError('Invalid input_frame; refusing possible double transformation')
         if parameter('input_topic') == parameter('output_topic'):
             raise ValueError('Input/output topics must differ')
-        self.publisher = self.create_publisher(PointCloud2, parameter('output_topic'), qos_profile_sensor_data)
+        cloud_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                               durability=DurabilityPolicy.VOLATILE)
+        self.publisher = self.create_publisher(PointCloud2, parameter('output_topic'), cloud_qos)
         if parameter('publish_calibration_tf'):
             # Quaternion of the composed base<-input transform; no SciPy dependency.
             q = rotation_quaternion(self.rotation)
@@ -43,7 +45,7 @@ class CalibratedCloud(Node):
             tf.transform.rotation.x, tf.transform.rotation.y, tf.transform.rotation.z, tf.transform.rotation.w = map(float, q)
             self.broadcaster = StaticTransformBroadcaster(self)
             self.broadcaster.sendTransform(tf)
-        self.subscription = self.create_subscription(PointCloud2, parameter('input_topic'), self.receive, qos_profile_sensor_data)
+        self.subscription = self.create_subscription(PointCloud2, parameter('input_topic'), self.receive, cloud_qos)
         self.get_logger().info(f'Calibration {source} -> {self.target}; input alias {self.input_frame}; output {parameter("output_topic")}')
 
     def receive(self, message):

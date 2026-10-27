@@ -52,8 +52,16 @@
     place_goal_tolerance: 0.01
     # Release arrival check; independent of the tighter planning goal tolerance.
     place_arrival_tolerance: 0.10
-    # P1..P7 ordered boundary in fr3_link0, shifted -0.03 m along base Y from recorded positions.
+    # P1..P7 ordered boundary in fr3_link0, shifted -0.024 m along base Y from recorded positions.
     # Project onto fitted plane; total thickness is symmetric about that plane.
     platform_enabled: true
     platform_thickness: 0.01
-    platform_points: [-0.252, -0.510, 0.422, -0.234, -0.521, 0.936, 0.108, -0.530, 0.953, 0.380, -0.536, 0.907, 0.557, -0.537, 0.740, 0.644, -0.534, 0.573, 0.653, -0.531, 0.454]
+    platform_points: [-0.252, -0.504, 0.422, -0.234, -0.515, 0.936, 0.108, -0.524, 0.953, 0.380, -0.530, 0.907, 0.557, -0.531, 0.740, 0.644, -0.528, 0.573, 0.653, -0.525, 0.454]
+    # Lift straight upward in robot base +Y after grasping, with fixed orientation.
+    lift_distance: 0.40
+    lift_position_tolerance: 0.01
+    # Within this base-Y height gap from the +Y platform face, TCP Z = base -Y.
+    near_board_height_threshold: 0.01
+    # Original selected point gap < 8 mm: raise TCP target by 5 mm along base +Y.
+    near_board_raise_threshold: 0.008
+    near_board_target_raise: 0.005

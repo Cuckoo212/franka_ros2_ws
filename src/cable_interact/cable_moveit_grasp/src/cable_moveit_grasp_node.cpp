@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <thread>
 #include <Eigen/SVD>
 #include <cable_moveit_grasp/geometry.hpp>
 #include <cable_moveit_grasp/path_validation.hpp>
@@ -106,22 +107,27 @@ public:
     declare_parameter("gripper_force", 10.0);
     declare_parameter("grasp_epsilon", 0.003);
     declare_parameter("gripper_timeout", 15.0);
+    declare_parameter("lift_distance", 0.40);
+    declare_parameter("lift_position_tolerance", 0.01);
     declare_parameter("place_enabled", true);
     declare_parameter("place_joint_names", std::vector<std::string>{"fr3_joint1", "fr3_joint2", "fr3_joint3", "fr3_joint4", "fr3_joint5", "fr3_joint6", "fr3_joint7"});
     declare_parameter("place_joint_positions", std::vector<double>{-0.5233661532402039, -1.5837199687957764, -0.40842023491859436, -1.467320442199707, -1.0411325693130493, 1.900314211845398, -2.7240424156188965});
     declare_parameter("place_planning_time", 5.0);
     declare_parameter("place_goal_tolerance", 0.01);
     declare_parameter("place_arrival_tolerance", 0.10);
+    declare_parameter("near_board_height_threshold", 0.01);
+    declare_parameter("near_board_raise_threshold", 0.008);
+    declare_parameter("near_board_target_raise", 0.005);
     declare_parameter("platform_enabled", true);
     declare_parameter("platform_thickness", 0.01);
-    declare_parameter("platform_points", std::vector<double>{-0.252, -0.510, 0.422, -0.234, -0.521, 0.936, 0.108, -0.530, 0.953, 0.380, -0.536, 0.907, 0.557, -0.537, 0.740, 0.644, -0.534, 0.573, 0.653, -0.531, 0.454});
+    declare_parameter("platform_points", std::vector<double>{-0.252, -0.504, 0.422, -0.234, -0.515, 0.936, 0.108, -0.524, 0.953, 0.380, -0.530, 0.907, 0.557, -0.531, 0.740, 0.644, -0.528, 0.573, 0.653, -0.525, 0.454});
     buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
     listener_ = std::make_unique<tf2_ros::TransformListener>(*buffer_);
     operations_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     rclcpp::SubscriptionOptions options;
     options.callback_group = operations_;
     cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(str("cloud_topic"),
-        rclcpp::SensorDataQoS(), [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud) {
+        rclcpp::QoS(1).reliable().durability_volatile(), [this](sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud) {
           std::lock_guard<std::mutex> lock(input_mutex_); cloud_ = cloud; cloud_received_ = std::chrono::steady_clock::now();
         });
     point_sub_ = create_subscription<geometry_msgs::msg::PointStamped>(str("clicked_point_topic"),
@@ -155,7 +161,7 @@ public:
         }, options);
     generate_service_ = service("~/generate_candidates", [this] { generate(); return "Candidates evaluated and best feasible trajectory previewed"; });
     plan_service_ = service("~/plan", [this] { generate(); return "Candidates evaluated"; });
-    execute_service_ = service("~/execute_selected", [this] { execute(); return flag("place_enabled") ? "Grasp, transport and release completed" : "Selected trajectory completed"; });
+    execute_service_ = service("~/execute_selected", [this] { execute(); return flag("place_enabled") ? "Grasp, +Y lift, transport and release completed" : "Selected trajectory completed"; });
     // Feedback merely queues an ID; planning and execution are serialized in operations_.
     server_ = std::make_unique<interactive_markers::InteractiveMarkerServer>(
         get_namespace() + std::string("/cable_grasp_frames"), this);
@@ -375,18 +381,34 @@ private:
     move_group_->setPlanningTime(number("planning_time"));
     move_group_->setMaxVelocityScalingFactor(number("velocity_scaling"));
     move_group_->setMaxAccelerationScalingFactor(number("acceleration_scaling"));
+    Eigen::Vector3d grasp_target=selected;
+    bool near_board=false;
+    if (flag("platform_enabled")) {
+      const auto platform=cable_grasp::makePlatform(
+          get_parameter("platform_points").as_double_array(),number("platform_thickness"));
+      const double gap=cable_grasp::boardHeightGap(selected,platform.center,platform.normal,number("platform_thickness"));
+      near_board=cable_grasp::needsBoardNormalGrasp(gap,number("near_board_height_threshold"));
+      grasp_target=cable_grasp::raisedBoardTarget(selected,gap,
+          number("near_board_raise_threshold"),number("near_board_target_raise"));
+      RCLCPP_INFO(get_logger(), "Near-board target correction: original [%.6f, %.6f, %.6f], target [%.6f, %.6f, %.6f], +Y shift %.6f m (before target_offset)",
+          selected.x(),selected.y(),selected.z(),grasp_target.x(),grasp_target.y(),grasp_target.z(),grasp_target.y()-selected.y());
+      RCLCPP_INFO(get_logger(), "Selected point board +Y surface height gap %.6f m, threshold %.6f m; %s",
+          gap,number("near_board_height_threshold"),near_board ? "TCP Z fixed to base -Y; two tangent-sign candidates" : "normal roll sampling");
+    }
+    const int total=near_board ? 2 : 2*static_cast<int>(std::ceil(360./number("roll_step_degrees")));
     int id = 0;
-    for (int sign : {1,-1}) for (double degrees=0; degrees<360.-1e-6; degrees+=number("roll_step_degrees")) {
+    for (int sign : {1,-1}) for (double degrees=0; degrees<(near_board ? 1. : 360.-1e-6); degrees+=number("roll_step_degrees")) {
       Candidate candidate; candidate.id = id++; candidate.sign = sign; candidate.angle = degrees;
       Eigen::Isometry3d tcp = Eigen::Isometry3d::Identity();
-      tcp.linear() = cable_grasp::candidateRotation(tangent,sign,degrees*M_PI/180.);
-      tcp.translation() = selected+Eigen::Vector3d(offset[0],offset[1],offset[2]);
+      tcp.linear() = near_board ? cable_grasp::boardNormalRotation(tangent,sign) :
+          cable_grasp::candidateRotation(tangent,sign,degrees*M_PI/180.);
+      tcp.translation() = grasp_target+Eigen::Vector3d(offset[0],offset[1],offset[2]);
       Eigen::Isometry3d entry = tcp; entry.translation() -= number("approach_distance")*tcp.linear().col(2);
       candidate.tcp = pose(tcp); candidate.entry = pose(entry);
       try { planCandidate(candidate,*start,*scene,base_to_model,tcp_to_tip); }
       catch (const std::exception& e) { candidate.reason = e.what(); }
       candidates_.push_back(std::move(candidate));
-      RCLCPP_INFO(get_logger(), "Candidate %d/%d: %s", id, 2*static_cast<int>(std::ceil(360./number("roll_step_degrees"))), candidates_.back().reason.c_str());
+      RCLCPP_INFO(get_logger(), "Candidate %d/%d: %s", id, total, candidates_.back().reason.c_str());
     }
     publishCandidates();
     const Candidate* best = nullptr;
@@ -508,6 +530,36 @@ private:
       if (!std::isfinite(number(key)) || number(key)<=0.) throw std::runtime_error("Invalid placement timing/tolerance");
     return goal;
   }
+  MGI::Plan planLift(const moveit::core::RobotState& start,
+                     const planning_scene::PlanningScene& scene) {
+    const double distance=number("lift_distance");
+    if (!std::isfinite(distance) || distance<=0. ||
+        !std::isfinite(number("lift_position_tolerance")) || number("lift_position_tolerance")<=0.)
+      throw std::runtime_error("Invalid lift distance/tolerance");
+    const auto base_to_model=start.getGlobalLinkTransform(str("base_frame"));
+    Eigen::Isometry3d target=base_to_model.inverse()*start.getGlobalLinkTransform(str("end_effector_link"));
+    target.translation().y()+=distance; // base +Y, never tool-local Y or global Z
+    move_group_->setStartState(start);
+    move_group_->setPoseReferenceFrame(str("base_frame"));
+    moveit_msgs::msg::RobotTrajectory message;
+    const auto target_pose=pose(target);
+    const double fraction=move_group_->computeCartesianPath({target_pose.pose},
+        number("cartesian_step"),number("jump_threshold"),message,true);
+    if (!std::isfinite(fraction) || fraction<0.999999) throw std::runtime_error("Incomplete collision-free +Y lift; fraction="+std::to_string(fraction));
+    robot_trajectory::RobotTrajectory trajectory(move_group_->getRobotModel(),str("planning_group"));
+    trajectory.setRobotTrajectoryMsg(start,message);
+    trajectory_processing::IterativeParabolicTimeParameterization timing;
+    if (!timing.computeTimeStamps(trajectory,number("velocity_scaling"),number("acceleration_scaling")))
+      throw std::runtime_error("Lift time parameterization failed");
+    const auto goal=kinematic_constraints::constructGoalConstraints(str("end_effector_link"),target_pose,
+        move_group_->getGoalPositionTolerance(),move_group_->getGoalOrientationTolerance());
+    cable_grasp::validateTrajectory(trajectory,scene,number("validation_joint_step"),
+                                    move_group_->getPathConstraints(),{goal});
+    MGI::Plan plan;
+    moveit::core::robotStateToRobotStateMsg(start,plan.start_state_);
+    trajectory.getRobotTrajectoryMsg(plan.trajectory_);
+    return plan;
+  }
   MGI::Plan planPlace(const moveit::core::RobotState& start,
                       const planning_scene::PlanningScene& scene) {
     const auto goal = placeTarget(start);
@@ -541,7 +593,7 @@ private:
     auto& candidate=candidates_[id]; target_pub_->publish(candidate.tcp); entry_pub_->publish(candidate.entry);
     moveit_msgs::msg::DisplayTrajectory preview; preview.model_id=move_group_->getRobotModel()->getName();
     preview.trajectory_start=candidate.plan.start_state_; preview.trajectory.push_back(candidate.plan.trajectory_);
-    if (flag("place_enabled")) {
+    if (flag("gripper_enabled")) {
       robot_trajectory::RobotTrajectory grasp(move_group_->getRobotModel(),str("planning_group"));
       auto scene=sceneSnapshot();
       grasp.setRobotTrajectoryMsg(scene->getCurrentState(),candidate.plan.trajectory_);
@@ -549,7 +601,11 @@ private:
       const auto fingers=get_parameter("gripper_joint_names").as_string_array();
       for (const auto& name:fingers) closed.setVariablePosition(name,number("grasp_width")/2.);
       closed.update();
-      preview.trajectory.push_back(planPlace(closed,*scene).trajectory_);
+      const auto lift=planLift(closed,*scene);
+      preview.trajectory.push_back(lift.trajectory_);
+      robot_trajectory::RobotTrajectory raised(move_group_->getRobotModel(),str("planning_group"));
+      raised.setRobotTrajectoryMsg(closed,lift.trajectory_);
+      if (flag("place_enabled")) preview.trajectory.push_back(planPlace(raised.getLastWayPoint(),*scene).trajectory_);
     }
     preview_pub_->publish(preview);
     selected_id_=id;
@@ -633,10 +689,42 @@ private:
       goal.width=number("grasp_width"); goal.speed=number("gripper_speed"); goal.force=number("gripper_force");
       goal.epsilon.inner=goal.epsilon.outer=number("grasp_epsilon");
       gripper<franka_msgs::action::Grasp>(grasp_client_,goal);
+      try {
+        RCLCPP_INFO(get_logger(), "Grasp succeeded; lifting %.3f m along %s +Y with fixed tool orientation",
+                    number("lift_distance"),str("base_frame").c_str());
+        auto measured=move_group_->getCurrentState(5.);
+        if (!measured) throw std::runtime_error("Missing post-grasp joint state");
+        const auto lift_scene=sceneSnapshot();
+        const Eigen::Vector3d start_tcp=(measured->getGlobalLinkTransform(str("base_frame")).inverse()*
+            measured->getGlobalLinkTransform(str("tcp_link"))).translation();
+        const auto lift=planLift(*measured,*lift_scene);
+        moveit_msgs::msg::DisplayTrajectory preview;
+        preview.model_id=move_group_->getRobotModel()->getName();
+        preview.trajectory_start=lift.start_state_; preview.trajectory.push_back(lift.trajectory_);
+        preview_pub_->publish(preview);
+        if (move_group_->execute(lift)!=moveit::core::MoveItErrorCode::SUCCESS)
+          throw std::runtime_error("Lift execution failed");
+        const Eigen::Vector3d expected=start_tcp+Eigen::Vector3d(0.,number("lift_distance"),0.);
+        Eigen::Vector3d reached=Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
+        const auto deadline=std::chrono::steady_clock::now()+2s;
+        do {
+          auto raised=move_group_->getCurrentState(0.5);
+          if (raised) reached=(raised->getGlobalLinkTransform(str("base_frame")).inverse()*
+              raised->getGlobalLinkTransform(str("tcp_link"))).translation();
+          if ((reached-expected).norm()<=number("lift_position_tolerance")) break;
+          std::this_thread::sleep_for(50ms);
+        } while (std::chrono::steady_clock::now()<deadline);
+        if ((reached-expected).norm()>number("lift_position_tolerance"))
+          throw std::runtime_error("Lift endpoint position error="+std::to_string((reached-expected).norm())+" m");
+        RCLCPP_INFO(get_logger(), "Lift complete; TCP displacement in base: [%.4f, %.4f, %.4f] m",
+                    reached.x()-start_tcp.x(),reached.y()-start_tcp.y(),reached.z()-start_tcp.z());
+      } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Lift failed; transport and release not commanded: ")+e.what());
+      }
     }
     if (flag("place_enabled")) {
       try {
-        RCLCPP_INFO(get_logger(), "Grasp succeeded; replanning transport from measured joint state (preview was approximate)");
+        RCLCPP_INFO(get_logger(), "Lift succeeded; replanning transport from measured joint state (preview was approximate)");
         auto measured=move_group_->getCurrentState(5.);
         if (!measured) throw std::runtime_error("Missing post-grasp joint state");
         auto place_scene=sceneSnapshot();
@@ -668,7 +756,7 @@ private:
       release.width=number("open_width"); release.speed=number("gripper_speed");
       try { gripper<franka_msgs::action::Move>(open_client_,release); }
       catch (const std::exception& e) { throw std::runtime_error(std::string("Placement reached but release failed: ")+e.what()); }
-      RCLCPP_INFO(get_logger(), "Grasp, transport and release complete");
+      RCLCPP_INFO(get_logger(), "Grasp, +Y lift, transport and release complete");
     } else RCLCPP_INFO(get_logger(), "Grasp complete; placement disabled");
   }
   std::mutex input_mutex_;
