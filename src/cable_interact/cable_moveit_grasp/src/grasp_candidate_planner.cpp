@@ -69,6 +69,8 @@ public:
     for(const auto& entry:get_node_parameters_interface()->get_parameter_overrides())
       if(entry.first.rfind("ompl.",0)==0 && !has_parameter(entry.first)) declare_parameter(entry.first,entry.second);
     declare_parameter("candidate_arm", "");
+    declare_parameter("require_arm_selection",true);
+    arm_selected_=!get_parameter("require_arm_selection").as_bool();
     declare_parameter("candidate_plan_max_age", 60.0);
     declare_parameter("a_from_b_enabled",false);
     declare_parameter("a_from_b_use_current_tcp",true);
@@ -166,6 +168,7 @@ public:
 
       arm_selection_sub_ = create_subscription<std_msgs::msg::String>("/dual_arm/selected_grasp_arm",
           rclcpp::QoS(1).transient_local(), [this](std_msgs::msg::String::ConstSharedPtr message) {
+            if(!flag("require_arm_selection")) return;
             const bool enabled=message->data==str("candidate_arm");
             if (arm_selected_.exchange(enabled)!=enabled) {
               ++input_revision_; selected_id_=-1; clear_pending_=true;
@@ -212,7 +215,9 @@ public:
               result.group_name=str("planning_group");
               result.error_code.val=moveit_msgs::msg::MoveItErrorCodes::SUCCESS;
               manual_fallback_=false;
-              selected_id_=-1;publishPlanReady(false); // One-time handoff; execution backend revalidates against live state/scene.
+              if(request->motion_plan_request.planner_id!="preview_only") {
+                selected_id_=-1;publishPlanReady(false); // Consume only actual execution handoffs.
+              }
             } catch(const std::exception& error) {last_plan_error_=error.what();RCLCPP_ERROR(get_logger(), "Candidate handoff rejected: %s",error.what());}
           },rmw_qos_profile_services_default,operations_);
       last_error_service_=create_service<Trigger>("~/get_last_plan_error",
@@ -264,7 +269,7 @@ public:
       result.successful = parameters.empty() || !busy_;
       if (!result.successful) { result.reason = "Operation active; change parameters after it finishes"; return result; }
       for (const auto& p : parameters) {
-        if (p.get_name() == "candidate_arm" || p.get_name() == "planning_group" || p.get_name() == "move_group_namespace" ||
+        if (p.get_name() == "require_arm_selection" || p.get_name() == "candidate_arm" || p.get_name() == "planning_group" || p.get_name() == "move_group_namespace" ||
             p.get_name() == "base_frame" || p.get_name() == "tcp_link" ||
             p.get_name() == "end_effector_link" || p.get_name() == "cloud_topic" ||
             p.get_name() == "clicked_point_topic") {

@@ -3,9 +3,11 @@ import math
 
 
 class MeasuredJointStore:
-    def __init__(self, stale_timeout=1.0):
+    def __init__(self, stale_timeout=1.0, required_arms=("a", "b")):
         if not math.isfinite(stale_timeout) or stale_timeout <= 0:
             raise ValueError('stale_timeout must be positive')
+        if not required_arms or not set(required_arms).issubset({"a", "b"}):
+            raise ValueError("required_arms must contain a and/or b")
         self.stale_timeout = stale_timeout
         self.owners = {}
         self.required = []
@@ -15,6 +17,8 @@ class MeasuredJointStore:
             fingers = [prefix + 'fr3_finger_joint1', prefix + 'fr3_finger_joint2']
             self.owners[arm] = set(joints)
             self.owners[arm + '_gripper'] = set(fingers)
+            if arm not in required_arms:
+                continue
             self.required += joints
             self.order += joints + fingers
         self.values = {}

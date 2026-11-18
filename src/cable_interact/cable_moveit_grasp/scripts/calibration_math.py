@@ -1,4 +1,4 @@
-"""Lightweight equivalent of pointcloud_tools' eye-on-base/optical conversion."""
+"""Eye-on-base calibration loading and optical-frame coordinate conversion."""
 import numpy as np
 import yaml
 

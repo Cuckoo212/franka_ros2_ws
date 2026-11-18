@@ -1,5 +1,6 @@
 #pragma once
 #include <optional>
+#include <cable_moveit_grasp/motion_common.hpp>
 #include <cable_moveit_grasp/grasp_retry.hpp>
 #include <algorithm>
 #include <chrono>
@@ -57,25 +58,10 @@ class DualMotion : public rclcpp::Node {
     if (!client->wait_for_action_server(3s)) throw std::runtime_error("Gripper unavailable");
     checkGripperMotion(arm,goal.width,std::is_same<Action,franka_msgs::action::Grasp>::value);
     physical_command_sent_=true;
-    auto sent=client->async_send_goal(goal);
-    if(sent.wait_for(3s)!=std::future_status::ready) throw std::runtime_error("Unknown gripper goal state; recovery required");
-    auto handle=sent.get(); if(!handle) throw std::runtime_error("Gripper goal rejected");
-    auto result=client->async_get_result(handle);
-    if(result.wait_for(15s)!=std::future_status::ready) {client->async_cancel_goal(handle); throw std::runtime_error("Gripper timeout; recovery required");}
-    auto wrapped=result.get();
-    if(!wrapped.result) throw std::runtime_error("Gripper returned an empty result; recovery required");
-    report("gripper "+arm+" result: action_code="+std::to_string(static_cast<int>(wrapped.code))+
-        " success="+std::string(wrapped.result->success ? "true" : "false")+" error='"+wrapped.result->error+"'");
-    if constexpr(std::is_same<Action,franka_msgs::action::Grasp>::value) {
-      // A completed negative grasp with no device error may be retried. Unknown,
-      // canceled, timed-out or explicit device-error results remain hard failures.
-      if(!wrapped.result->success && wrapped.result->error.empty() &&
-         (wrapped.code==rclcpp_action::ResultCode::ABORTED || wrapped.code==rclcpp_action::ResultCode::SUCCEEDED))
-        throw cable_grasp::GraspMiss("Gripper completed but did not confirm a grasp");
-    }
-    if(wrapped.code!=rclcpp_action::ResultCode::SUCCEEDED || !wrapped.result->success)
-      throw std::runtime_error("Gripper failed; action_code="+std::to_string(static_cast<int>(wrapped.code))+
-          "; error='"+wrapped.result->error+"'; recovery required");
+    cable_grasp::sendGripperGoal<Action>(shared_from_this(),
+        (arm=="a" ? "/NS_2" : "/NS_1")+std::string("/franka_gripper/")+
+        (std::is_same<Action,franka_msgs::action::Move>::value ? "move" : "grasp"),goal,15.,
+        [this](const std::string& message){report(message);});
   }
   MGI::Plan selectedGraspPlan(const std::string& arm, MGI& group,bool reselect=false);
   robot_trajectory::RobotTrajectory checkPlan(MGI& group,const MGI::Plan& plan,bool assume_open=false);

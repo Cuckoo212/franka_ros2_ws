@@ -145,7 +145,6 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 'calibration_path',
                 #default_value='/home/flexcycle/.ros2/easy_handeye2/calibrations/fr3_calibration_apriltag.calib',
-                #default_value='/home/flexcycle/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/samples_calibration/calibration_001/fr3_calibration_integrated.calib',
             ),
             DeclareLaunchArgument(
                 'controllers_yaml',

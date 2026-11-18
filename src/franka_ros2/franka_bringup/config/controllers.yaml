@@ -46,26 +46,8 @@
       cartesian_pose_example_controller:
         type: franka_example_controllers/CartesianPoseExampleController
 
-      cartesian_target_point_controller:
-        type: franka_example_controllers/CartesianTargetPointBoardController
-
-      cartesian_target_point_board_controller:
-        type: franka_example_controllers/CartesianTargetPointBoardController
-
-      cartesian_target_point_air_controller:
-        type: franka_example_controllers/CartesianTargetPointAirController
-
       cartesian_apriltag_position_controller:
         type: franka_example_controllers/CartesianApriltagPositionController
-
-      cartesian_cable_trajectory_controller:
-        type: franka_example_controllers/CartesianCableTrajectoryController
-
-      cartesian_cable_air_interact_controller:
-        type: franka_example_controllers/CartesianCableAirInteractController
-
-      cartesian_cable_board_interact_controller:
-        type: franka_example_controllers/CartesianCableBoardInteractController
 
       cartesian_velocity_example_controller:
         type: franka_example_controllers/CartesianVelocityExampleController
@@ -186,36 +168,6 @@
     ros__parameters:
       gazebo: false
 
-/**:
-  cartesian_cable_air_interact_controller:
-    ros__parameters:
-      gazebo: false
-      interaction_enabled: true
-      interaction_amplitude: 0.03
-      interaction_move_duration: 3.0
-      interaction_hold_duration: 0.5
-      interaction_publish_rate: 30.0
-      gripper_width: 0.004
-      gripper_speed: 0.02
-      gripper_force: 10.0
-
-/**:
-  cartesian_cable_board_interact_controller:
-    ros__parameters:
-      gazebo: false
-      interaction_enabled: true
-      interaction_amplitude: 0.06
-      interaction_move_duration: 3.0
-      interaction_hold_duration: 0.5
-      interaction_publish_rate: 30.0
-      interaction_resistance_force_threshold: 10.0
-      close_gripper_with_move: false
-      continue_after_gripper_close_failure: true
-      gripper_width: 0.004
-      gripper_speed: 0.02
-      gripper_force: 10.0
-      gripper_epsilon_inner: 0.004
-      gripper_epsilon_outer: 0.020
 /**:
   cartesian_apriltag_position_controller:
     ros__parameters:

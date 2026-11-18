@@ -1,0 +1,120 @@
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Tool Properties
+  Name: Tool Properties
+Visualization Manager:
+  Class: ''
+  Global Options:
+    Fixed Frame: fr3_link0
+    Background Color: 28; 30; 36
+    Frame Rate: 30
+  Displays:
+  - Class: rviz_default_plugins/RobotModel
+    Name: Live Robot
+    Enabled: true
+    Description Source: Topic
+    Description Topic:
+      Value: robot_description
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+    Visual Enabled: true
+    Collision Enabled: false
+  - Class: rviz_default_plugins/TF
+    Name: TF
+    Enabled: true
+    Show Names: false
+    Show Axes: true
+    Show Arrows: false
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Cable Point Cloud
+    Enabled: true
+    Topic:
+      Value: /single_arm/cable_points_base
+      Reliability Policy: Reliable
+      Durability Policy: Volatile
+      Depth: 1
+    Selectable: true
+    Position Transformer: XYZ
+    Color Transformer: RGB8
+    Style: Points
+    Size (Pixels): 5
+  - Class: rviz_default_plugins/MarkerArray
+    Name: Candidate Axes
+    Enabled: true
+    Topic:
+      Value: /single_arm/planner/candidate_planner/candidates
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+  - Class: rviz_default_plugins/InteractiveMarkers
+    Name: Select Candidate Frames
+    Enabled: true
+    Interactive Markers Namespace: /single_arm/planner/cable_grasp_frames
+    Show Descriptions: true
+    Show Axes: false
+  - Class: rviz_default_plugins/Pose
+    Name: Selected TCP
+    Enabled: true
+    Topic:
+      Value: /single_arm/planner/candidate_planner/grasp_pose
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+    Shape: Axes
+    Axes Length: 0.08
+    Axes Radius: 0.003
+  - Class: rviz_default_plugins/Pose
+    Name: Approach Entry
+    Enabled: true
+    Topic:
+      Value: /single_arm/planner/candidate_planner/entry_pose
+      Reliability Policy: Reliable
+      Durability Policy: Transient Local
+    Shape: Axes
+    Axes Length: 0.04
+    Axes Radius: 0.002
+  - Class: moveit_rviz_plugin/Trajectory
+    Name: Full Recycling Preview
+    Enabled: true
+    Robot Description: robot_description
+    Trajectory Topic: /single_arm/single_arm_motion/recycling_preview
+    Loop Animation: true
+    State Display Time: 0.05 s
+    Robot Alpha: 0.5
+  - Class: moveit_rviz_plugin/PlanningScene
+    Name: Obstacles
+    Enabled: true
+    Robot Description: robot_description
+    Planning Scene Topic: /single_arm/monitored_planning_scene
+    Scene Robot:
+      Show Robot Visual: false
+      Show Robot Collision: false
+    Scene Geometry:
+      Show Scene Geometry: true
+  - Class: moveit_rviz_plugin/Trajectory
+    Name: Selected Grasp Preview
+    Enabled: false
+    Robot Description: robot_description
+    Trajectory Topic: /single_arm/planner/candidate_planner/display_trajectory
+    Loop Animation: true
+    State Display Time: 0.05 s
+    Robot Alpha: 0.5
+  Tools:
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/PublishPoint
+    Single click: true
+    Topic: /single_arm/clicked_point
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.4
+      Focal Point:
+        X: 0.4
+        Y: 0
+        Z: 0.3
+      Pitch: 0.4
+      Yaw: 0.8
+Window Geometry:
+  Width: 1440
+  Height: 900

@@ -12,11 +12,18 @@ class MeasuredJointStateMux(Node):
     def __init__(self):
         super().__init__('dual_joint_states')
         self.declare_parameter('stale_timeout', 1.0)
-        self.store = MeasuredJointStore(self.get_parameter('stale_timeout').value)
-        self.output = self.create_publisher(JointState, '/dual_arm/joint_states', 10)
-        topics = {'a': '/NS_2/franka/joint_states', 'b': '/NS_1/franka/joint_states',
-                  'a_gripper': '/NS_2/franka_gripper/joint_states',
-                  'b_gripper': '/NS_1/franka_gripper/joint_states'}
+        self.declare_parameter('required_arms', ['a', 'b'])
+        self.declare_parameter('arm_a_namespace', '/NS_2')
+        self.declare_parameter('arm_b_namespace', '/NS_1')
+        self.declare_parameter('output_topic', '/dual_arm/joint_states')
+        arms = self.get_parameter('required_arms').value
+        self.store = MeasuredJointStore(self.get_parameter('stale_timeout').value, arms)
+        self.output = self.create_publisher(JointState, self.get_parameter('output_topic').value, 10)
+        topics = {}
+        for arm in arms:
+            ns = self.get_parameter('arm_' + arm + '_namespace').value.rstrip('/')
+            topics[arm] = ns + '/franka/joint_states'
+            topics[arm + '_gripper'] = ns + '/franka_gripper/joint_states'
         self.input_subscriptions = [self.create_subscription(
             JointState, topic, lambda msg, source=source: self.receive(source, msg), qos_profile_sensor_data)
             for source, topic in topics.items()]

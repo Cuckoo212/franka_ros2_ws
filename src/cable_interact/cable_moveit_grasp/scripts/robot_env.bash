@@ -19,3 +19,6 @@ export FASTRTPS_DEFAULT_PROFILES_FILE=/home/flexcycle/Motion_Correlation/cmcor/p
 export FASTDDS_DEFAULT_PROFILES_FILE="$FASTRTPS_DEFAULT_PROFILES_FILE"
 # Load the manual dual-arm commands into this terminal.
 source "${BASH_SOURCE[0]%/*}/dual_arm_commands.bash" || return
+
+# Independent single-arm recycling demo commands.
+source "${BASH_SOURCE[0]%/*}/single_arm_commands.bash" || return

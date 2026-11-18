@@ -15,7 +15,6 @@ option(CHECK_TIDY "Adds clang-tidy tests" OFF)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(franka_msgs REQUIRED)
@@ -35,16 +34,9 @@ find_package(Eigen3 REQUIRED)
 
 set(CABLE_INTERACT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../cable_interact)
 
-ament_python_install_package(pointcloud_tools PACKAGE_DIR ${CABLE_INTERACT_DIR}/pointcloud_tools)
-
 add_library(
         ${PROJECT_NAME}
         SHARED
-        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_cable_trajectory_controller.cpp
-        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_cable_air_interact_controller.cpp
-        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_cable_board_interact_controller.cpp
-        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_target_point_air_controller.cpp
-        ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_target_point_board_controller.cpp
         ${CABLE_INTERACT_DIR}/cable_controllers/cartesian_apriltag_position_controller.cpp
         ${CABLE_INTERACT_DIR}/cable_controllers/move_to_start_example_controller.cpp
         src/fr3/cartesian_elbow_example_controller.cpp
@@ -102,13 +94,6 @@ install(
 install(
         DIRECTORY include/
         DESTINATION include
-)
-
-install(
-        PROGRAMS
-        ${CABLE_INTERACT_DIR}/pointcloud_tools/multigrasp_orchestrator.py
-        ${CABLE_INTERACT_DIR}/pointcloud_tools/multigrasp_3090_worker.py
-        DESTINATION lib/${PROJECT_NAME}
 )
 
 # PTP Motion example executable (binary)

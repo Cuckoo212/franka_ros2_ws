@@ -1,0 +1,58 @@
+# Restored task geometry from git 7f5f922; lift is link0 +Y, not local TCP Y.
+/**:
+  ros__parameters:
+    execution_enabled: false
+    velocity_scaling: 0.05
+    acceleration_scaling: 0.05
+    open_width: 0.08
+    grasp_width: 0.004
+    gripper_speed: 0.02
+    gripper_force: 10.0
+    grasp_epsilon: 0.003
+    gripper_timeout: 15.0
+    lift_distance: 0.4
+    lift_position_tolerance: 0.01
+    place_joint_positions:
+    - -0.5233661532402039
+    - -1.5837199687957764
+    - -0.40842023491859436
+    - -1.467320442199707
+    - -1.0411325693130493
+    - 1.900314211845398
+    - -2.7240424156188965
+    place_planning_time: 5.0
+    place_goal_tolerance: 0.01
+    place_arrival_tolerance: 0.1
+    arrival_timeout: 3.0
+    camera_obstacle_enabled: true
+    camera_obstacle_size:
+    - 0.12
+    - 0.05
+    - 0.04
+    camera_obstacle_center_optical:
+    - 0.0
+    - 0.0
+    - 0.0
+    platform_thickness: 0.01
+    platform_points:
+    - -0.252
+    - -0.504
+    - 0.422
+    - -0.234
+    - -0.515
+    - 0.936
+    - 0.108
+    - -0.524
+    - 0.953
+    - 0.38
+    - -0.53
+    - 0.907
+    - 0.557
+    - -0.531
+    - 0.74
+    - 0.644
+    - -0.528
+    - 0.573
+    - 0.653
+    - -0.525
+    - 0.454

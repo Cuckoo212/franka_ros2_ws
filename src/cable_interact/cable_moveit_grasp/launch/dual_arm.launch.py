@@ -15,6 +15,9 @@ def setup(context):
     execution_enabled = p('execution_enabled').lower() == 'true'
     share = get_package_share_directory('cable_moveit_grasp')
     sys.path.insert(0, os.path.join(get_package_prefix('cable_moveit_grasp'), 'lib', 'cable_moveit_grasp'))
+    from demo_launch_common import acquire_robot_leases
+    if p('start_drivers').lower() == 'true' or execution_enabled:
+        acquire_robot_leases([p('left_robot_ip'), p('right_robot_ip')])
     from dual_arm_model import build_model
     model = build_model()
     with open(os.path.join(share, 'config/candidate_planner.yaml'), encoding='utf-8') as stream:
@@ -157,6 +160,6 @@ def generate_launch_description():
                     left_robot_ip='192.168.3.102', right_robot_ip='192.168.3.101', rviz='true',
                     motion_config=os.path.join(share, 'config/dual_arm_motion.yaml'),
                     start_cloud_calibration='true',
-                    calibration_file=os.path.expanduser('~/franka_ros2_ws/src/cable_interact/pointcloud_tools/info_for_3Dpoint/samples_calibration/hand_eye_calibration/fr3_calibration_apriltag_depth_003.calib'))
+                    calibration_file=os.path.join(share, 'config/calibration/fr3_calibration_apriltag_depth_003.calib'))
     return LaunchDescription([*[DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()],
                               OpaqueFunction(function=setup)])

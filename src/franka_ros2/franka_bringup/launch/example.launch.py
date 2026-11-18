@@ -61,7 +61,6 @@ from launch_ros.substitutions import FindPackageShare
 
 # constant for the controller name parameter
 CONTROLLER_EXAMPLE = 'controller'
-CABLE_INTERACT_CONTROLLERS = {'cartesian_cable_air_interact_controller', 'cartesian_cable_board_interact_controller'}
 
 
 def _resolve_auto_flag(value, auto_value):
@@ -86,10 +85,9 @@ def generate_robot_nodes(context):
     config_file = LaunchConfiguration('robot_config_file').perform(context)
     controller_names = LaunchConfiguration('controller_names').perform(context)
     controller_names_vector = [name.strip() for name in controller_names.split(',')]
-    launch_cable_interact_tools = any(name in CABLE_INTERACT_CONTROLLERS for name in controller_names_vector)
     launch_realsense = _resolve_auto_flag(
         LaunchConfiguration('launch_realsense').perform(context),
-        launch_cable_interact_tools,
+        False,  # No controller implicitly starts camera acquisition.
     )
     spawn_controller = _resolve_auto_flag(
         LaunchConfiguration('spawn_controller').perform(context),

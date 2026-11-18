@@ -3,13 +3,8 @@
 
 void DualMotion::checkGripperMotion(const std::string& arm,double width,bool grasp) {
   freshState();
-  auto request=std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();request->components.components=1023;
-  auto future=scene_client_->async_send_request(request);
-  if(future.wait_for(3s)!=std::future_status::ready) throw std::runtime_error("Gripper collision scene unavailable");
-  planning_scene::PlanningScene scene(a_->getRobotModel());
-  if(!scene.setPlanningSceneMsg(future.get()->scene) || !scene.getWorld()->hasObject("cable_platform") ||
-     (get_parameter("camera_obstacle_enabled").as_bool() && !scene.getWorld()->hasObject("realsense_camera")))
-    throw std::runtime_error("Gripper collision scene missing table/camera");
+  auto scene_ptr=cable_grasp::requestMotionScene(scene_client_,a_->getRobotModel(),get_parameter("camera_obstacle_enabled").as_bool());
+  const auto& scene=*scene_ptr;
   auto state=scene.getCurrentState();
   {
     std::lock_guard<std::mutex> lock(mutex_);

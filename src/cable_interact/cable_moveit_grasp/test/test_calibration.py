@@ -29,7 +29,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(target,'fr3_link0')
 
     def test_camera_collision_pose_matches_cloud(self):
-        calib = pathlib.Path(__file__).resolve().parents[2] / 'pointcloud_tools/info_for_3Dpoint/samples_calibration/hand_eye_calibration/fr3_calibration_apriltag_depth_003.calib'
+        calib = pathlib.Path(__file__).resolve().parents[1] / 'config/calibration/fr3_calibration_apriltag_depth_003.calib'
         rotation, translation, _, _ = load_calibration(calib)
         center = [.02, -.03, -.04]
         pose = camera_obstacle_pose(calib, center)
@@ -63,7 +63,7 @@ class CalibrationTests(unittest.TestCase):
         np.testing.assert_allclose(p_a, [-.13, -.2, .3])
         np.testing.assert_allclose(r_ba @ p_a + t_ba, p_b)
         # Existing eye-on-base calibration plus optical conversion, composed once.
-        calib = pathlib.Path(__file__).resolve().parents[2] / 'pointcloud_tools/info_for_3Dpoint/samples_calibration/hand_eye_calibration/fr3_calibration_apriltag_depth_003.calib'
+        calib = pathlib.Path(__file__).resolve().parents[1] / 'config/calibration/fr3_calibration_apriltag_depth_003.calib'
         r_bc, t_bc, _, _ = load_calibration(calib)
         r_ac, t_ac = r_ab @ r_bc, r_ab @ t_bc + t_ab
         p_c = np.array([.1, -.2, .8])
@@ -71,7 +71,7 @@ class CalibrationTests(unittest.TestCase):
         np.testing.assert_allclose(t_ac, [.2549470060408407, -.3309618702166004, .5218691240613372])
 
     def test_direct_camera_to_a_matches_composed_path(self):
-        calib = pathlib.Path(__file__).resolve().parents[2] / 'pointcloud_tools/info_for_3Dpoint/samples_calibration/hand_eye_calibration/fr3_calibration_apriltag_depth_003.calib'
+        calib = pathlib.Path(__file__).resolve().parents[1] / 'config/calibration/fr3_calibration_apriltag_depth_003.calib'
         r_bc,t_bc,_,_ = load_calibration(calib)
         origin = np.array([.47,0.,0.])
         r_ac,t_ac = camera_to_left_transform(r_bc,t_bc,origin)
