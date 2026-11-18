@@ -88,6 +88,7 @@ def generate_robot_nodes(context):
         context
     )
     load_gripper = load_gripper_launch_configuration.lower() == 'true'
+    start_gripper_server = LaunchConfiguration('start_gripper_server').perform(context).lower() == 'true'
     robot_type = LaunchConfiguration('robot_type').perform(context)
     arm_prefix = LaunchConfiguration('arm_prefix').perform(context)
     urdf_path = PathJoinSubstitution(
@@ -116,6 +117,7 @@ def generate_robot_nodes(context):
     ).toprettyxml(indent='  ')
 
     namespace = LaunchConfiguration('namespace').perform(context)
+    spawn_broadcasters = LaunchConfiguration('spawn_state_broadcasters').perform(context).lower() == 'true'
 
     controllers_yaml = LaunchConfiguration('controllers_yaml').perform(context)
 
@@ -129,6 +131,7 @@ def generate_robot_nodes(context):
         Node(
             package='robot_state_publisher',
             executable='robot_state_publisher',
+            condition=IfCondition(LaunchConfiguration('publish_robot_state')),
             namespace=namespace,
             parameters=[{'robot_description': robot_description}],
             output='screen',
@@ -153,6 +156,8 @@ def generate_robot_nodes(context):
             executable='joint_state_publisher',
             name='joint_state_publisher',
             namespace=namespace,
+            condition=IfCondition(LaunchConfiguration('publish_joint_states')),
+            remappings=[] if LaunchConfiguration('publish_robot_state').perform(context).lower() == 'true' else [('robot_description', '/robot_description')],
             parameters=[
                 {
                     'source_list': joint_state_publisher_sources,
@@ -168,6 +173,7 @@ def generate_robot_nodes(context):
             executable='spawner',
             namespace=namespace,
             arguments=['joint_state_broadcaster'],
+            condition=IfCondition('true' if spawn_broadcasters else 'false'),
             output='screen',
         ),
         Node(
@@ -175,7 +181,7 @@ def generate_robot_nodes(context):
             executable='spawner',
             namespace=namespace,
             arguments=['franka_robot_state_broadcaster'],
-            condition=UnlessCondition(LaunchConfiguration('use_fake_hardware')),
+            condition=IfCondition('true' if spawn_broadcasters and LaunchConfiguration('use_fake_hardware').perform(context).lower() != 'true' else 'false'),
             output='screen',
         ),
         IncludeLaunchDescription(
@@ -192,12 +198,14 @@ def generate_robot_nodes(context):
             ),
             launch_arguments={
                 'namespace': namespace,
+                'arm_prefix': arm_prefix,
+                'robot_type': robot_type,
                 'robot_ip': LaunchConfiguration('robot_ip').perform(context),
                 'use_fake_hardware': LaunchConfiguration('use_fake_hardware').perform(
                     context
                 ),
             }.items(),
-            condition=IfCondition(LaunchConfiguration('load_gripper')),
+            condition=IfCondition('true' if load_gripper and start_gripper_server else 'false'),
         ),
     ]
 
@@ -210,6 +218,9 @@ def generate_robot_nodes(context):
 
 def generate_launch_description():
     launch_args = [
+        DeclareLaunchArgument("publish_joint_states", default_value="true"),
+        DeclareLaunchArgument("spawn_state_broadcasters", default_value="true"),
+        DeclareLaunchArgument("publish_robot_state", default_value="true"),
         DeclareLaunchArgument(
             'robot_type', default_value='', description='ID of the type of arm used'
         ),
@@ -224,6 +235,8 @@ def generate_launch_description():
             default_value='172.16.0.3',
             description='Hostname or IP address of the robot',
         ),
+        DeclareLaunchArgument('start_gripper_server', default_value='true',
+                              description='Start the ROS gripper server independently of the hand model'),
         DeclareLaunchArgument(
             'load_gripper',
             default_value='false',

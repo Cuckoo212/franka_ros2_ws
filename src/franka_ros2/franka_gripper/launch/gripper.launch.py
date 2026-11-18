@@ -28,6 +28,8 @@ def generate_robot_nodes(context):
     robot_type = LaunchConfiguration('robot_type').perform(context)
     namespace = LaunchConfiguration('namespace').perform(context)
     # Declare the launch argument names
+    prefix = LaunchConfiguration('arm_prefix').perform(context)
+    robot_type = (prefix + '_' if prefix else '') + robot_type
     default_joint_name_postfix = '_finger_joint'
     joint_names_1 = robot_type + default_joint_name_postfix + '1'
     joint_names_2 = robot_type + default_joint_name_postfix + '2'
@@ -65,6 +67,7 @@ def generate_robot_nodes(context):
 def generate_launch_description():
     return LaunchDescription(
         [
+            DeclareLaunchArgument('arm_prefix', default_value=''),
             DeclareLaunchArgument(
                 'robot_ip',
                 description='Hostname or IP address of the robot.'

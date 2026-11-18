@@ -76,6 +76,7 @@ GripperActionServer::GripperActionServer(const rclcpp::NodeOptions& options)
   }
   RCLCPP_INFO(this->get_logger(), "Connected to gripper");
   current_gripper_state_ = gripper_->readOnce();
+    last_state_update_ = std::chrono::steady_clock::now();
   const auto kHomingTask = Task::kHoming;
   this->stop_service_ =  // NOLINTNEXTLINE
       create_service<Trigger>("~/stop",
@@ -155,6 +156,8 @@ void GripperActionServer::executeMove(const std::shared_ptr<GoalHandleMove>& goa
 void GripperActionServer::executeGrasp(const std::shared_ptr<GoalHandleGrasp>& goal_handle) {
   auto command = [goal_handle, this]() {
     const auto kGoal = goal_handle->get_goal();
+    RCLCPP_INFO(get_logger(), "Grasp goal: width=%.9f m speed=%.6f m/s force=%.3f N epsilon_inner=%.9f m epsilon_outer=%.9f m",
+                kGoal->width, kGoal->speed, kGoal->force, kGoal->epsilon.inner, kGoal->epsilon.outer);
     return gripper_->grasp(kGoal->width, kGoal->speed, kGoal->force, kGoal->epsilon.inner,
                            kGoal->epsilon.outer);
   };
@@ -261,8 +264,10 @@ void GripperActionServer::publishGripperState() {
   std::lock_guard<std::mutex> lock(gripper_state_mutex_);
   try {
     current_gripper_state_ = gripper_->readOnce();
+    last_state_update_ = std::chrono::steady_clock::now();
   } catch (const franka::Exception& e) {
-    RCLCPP_ERROR(this->get_logger(), e.what());
+    RCLCPP_ERROR(this->get_logger(), "Gripper state read failed; cached JointState will not be published: %s", e.what());
+    return;
   }
   sensor_msgs::msg::JointState joint_states;
   joint_states.header.stamp = this->now();

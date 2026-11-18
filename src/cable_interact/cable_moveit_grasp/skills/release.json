@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "name": "release",
+  "description": "Open gripper and invalidate own holding record.",
+  "implementation": "src/skills/release_skill.cpp",
+  "parameters": {
+    "type": "object",
+    "required": [
+      "arm"
+    ],
+    "properties": {
+      "arm": {
+        "type": "string",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    "other_confirmed_holding_or_explicit_manual_home"
+  ],
+  "success_conditions": [
+    "gripper_action_success",
+    "own_holding_false"
+  ],
+  "failure_behavior": "stop scheduling; keep current grasp; explicit recovery required after physical failure",
+  "resource_locks": [
+    "shared_robot_motion",
+    "arm:{arm}"
+  ],
+  "backend": "franka_gripper_move",
+  "service": "/dual_arm/dual_arm_motion/{arm}/release"
+}

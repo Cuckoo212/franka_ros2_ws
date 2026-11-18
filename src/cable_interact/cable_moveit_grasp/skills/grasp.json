@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "name": "grasp",
+  "description": "Execute selected trajectory; retry confirmed misses at original TCP local Z -1cm then +1cm, HOME and reselect from fresh cloud with a bounded budget.",
+  "implementation": "src/skills/grasp_skill.cpp",
+  "parameters": {
+    "type": "object",
+    "required": [
+      "arm"
+    ],
+    "properties": {
+      "arm": {
+        "type": "string",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    "execution_enabled",
+    "own_arm_at_home",
+    "valid_selected_candidate"
+  ],
+  "success_conditions": [
+    "gripper_action_success",
+    "own_holding_recorded"
+  ],
+  "failure_behavior": "confirmed misses: retry Z offsets, HOME and bounded reselect, then wait for fresh manual point; unknown or hardware/motion failures: hold and require explicit recovery",
+  "resource_locks": [
+    "shared_robot_motion",
+    "arm:{arm}"
+  ],
+  "backend": "moveit_selected_trajectory",
+  "service": "/dual_arm/dual_arm_motion/{arm}/grasp"
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "verify",
+  "description": "Verify recorded successful gripper action evidence; no slip sensing implied.",
+  "implementation": "src/skills/verify_skill.cpp",
+  "parameters": {
+    "type": "object",
+    "required": [
+      "arm"
+    ],
+    "properties": {
+      "arm": {
+        "type": "string",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    "own_holding"
+  ],
+  "success_conditions": [
+    "own_holding_recorded"
+  ],
+  "failure_behavior": "stop scheduling; keep current grasp; explicit recovery required after physical failure",
+  "resource_locks": [
+    "shared_robot_motion",
+    "arm:{arm}"
+  ],
+  "backend": "recorded_gripper_action_evidence",
+  "service": "/dual_arm/dual_arm_motion/{arm}/verify"
+}

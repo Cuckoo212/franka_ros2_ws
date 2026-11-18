@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "name": "fix",
+  "description": "Reach recorded TCP position, preferring current orientation; try adaptive Cartesian orientations on failure; final unwrapped TCP-Y XZ signed angle within 180 degrees.",
+  "implementation": "src/skills/fix_skill.cpp",
+  "parameters": {
+    "type": "object",
+    "required": [
+      "arm"
+    ],
+    "properties": {
+      "arm": {
+        "type": "string",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    "execution_enabled",
+    "own_holding",
+    "other_released_at_home",
+    "fresh_joint_feedback",
+    "shared_collision_scene"
+  ],
+  "success_conditions": [
+    "recorded_fix_position_reached",
+    "absolute_terminal_unwrapped_tcp_y_xz_accumulation_le_180_degrees",
+    "joint_arrival_confirmed"
+  ],
+  "failure_behavior": "stop scheduling; keep current grasp; explicit recovery required after physical failure",
+  "resource_locks": [
+    "shared_robot_motion",
+    "arm:{arm}"
+  ],
+  "backend": "projected_fix_trajectory_selection",
+  "service": "/dual_arm/dual_arm_motion/{arm}/fix"
+}

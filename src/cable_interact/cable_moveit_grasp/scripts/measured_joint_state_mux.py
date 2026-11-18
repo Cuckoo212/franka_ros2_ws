@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Merge only actual hardware measurements, never URDF default positions."""
+import time
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import JointState
+from joint_state_store import MeasuredJointStore
+
+
+class MeasuredJointStateMux(Node):
+    def __init__(self):
+        super().__init__('dual_joint_states')
+        self.declare_parameter('stale_timeout', 1.0)
+        self.store = MeasuredJointStore(self.get_parameter('stale_timeout').value)
+        self.output = self.create_publisher(JointState, '/dual_arm/joint_states', 10)
+        topics = {'a': '/NS_2/franka/joint_states', 'b': '/NS_1/franka/joint_states',
+                  'a_gripper': '/NS_2/franka_gripper/joint_states',
+                  'b_gripper': '/NS_1/franka_gripper/joint_states'}
+        self.input_subscriptions = [self.create_subscription(
+            JointState, topic, lambda msg, source=source: self.receive(source, msg), qos_profile_sensor_data)
+            for source, topic in topics.items()]
+        self.timer = self.create_timer(1./30., self.publish)
+
+    def receive(self, source, message):
+        try:
+            stamp = message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+            ignored = self.store.update(source, list(message.name), list(message.position),
+                                        list(message.velocity), list(message.effort), stamp, time.monotonic())
+            if ignored:
+                self.get_logger().warning(f'{source}: ignoring joints owned by another source: {ignored}',
+                                          throttle_duration_sec=3.)
+        except ValueError as error:
+            self.get_logger().warning(f'{source}: dropped malformed measurement: {error}', throttle_duration_sec=3.)
+
+    def publish(self):
+        snapshot = self.store.snapshot(self.get_clock().now().nanoseconds, time.monotonic())
+        if snapshot is None:
+            self.get_logger().warning('Waiting for fresh raw joint positions from BOTH arms; no default poses published',
+                                      throttle_duration_sec=3.)
+            return
+        msg = JointState()
+        msg.name, msg.position, msg.velocity, msg.effort, stamp = snapshot
+        msg.header.stamp.sec, msg.header.stamp.nanosec = divmod(stamp, 1_000_000_000)
+        self.output.publish(msg)
+
+
+def main():
+    rclpy.init()
+    node = MeasuredJointStateMux()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

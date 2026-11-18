@@ -1,0 +1,82 @@
+[INFO] [1793194163.749732140] [moveit_robot_model.robot_model]: Loading robot model 'cable_dual_fr3'...
+[INFO] [1793194163.749777588] [moveit_robot_model.robot_model]: No root/virtual joint specified in SRDF. Assuming fixed joint
+Rectangular table: 8 vertices; thickness=0.01
+homeA + homeB fingers=0.000000,0.000000: bounds=1 collision=0
+homeA + homeB fingers=0.000000,0.040000: bounds=1 collision=0
+homeA + homeB fingers=0.040000,0.000000: bounds=1 collision=0
+homeA + homeB fingers=0.040000,0.040000: bounds=1 collision=0
+  TCP a_fr3_hand_tcp in B:  0.767115 -0.257157  0.824879
+  TCP fr3_hand_tcp in B: -0.293473 -0.222325  0.829861
+fixA + homeB fingers=0.000000,0.000000: bounds=1 collision=0
+fixA + homeB fingers=0.000000,0.040000: bounds=1 collision=0
+fixA + homeB fingers=0.040000,0.000000: bounds=1 collision=0
+fixA + homeB fingers=0.040000,0.040000: bounds=1 collision=0
+  TCP a_fr3_hand_tcp in B:  0.370809 -0.215708  0.685253
+  TCP fr3_hand_tcp in B: -0.293473 -0.222325  0.829861
+homeA + fixB fingers=0.000000,0.000000: bounds=1 collision=0
+homeA + fixB fingers=0.000000,0.040000: bounds=1 collision=0
+homeA + fixB fingers=0.040000,0.000000: bounds=1 collision=0
+homeA + fixB fingers=0.040000,0.040000: bounds=1 collision=0
+  TCP a_fr3_hand_tcp in B:  0.767115 -0.257157  0.824879
+  TCP fr3_hand_tcp in B: 0.0896162  -0.21155  0.676037
+fixA + fixB fingers=0.000000,0.000000: bounds=1 collision=0
+fixA + fixB fingers=0.000000,0.040000: bounds=1 collision=0
+fixA + fixB fingers=0.040000,0.000000: bounds=1 collision=0
+fixA + fixB fingers=0.040000,0.040000: bounds=1 collision=0
+a HOME->FIX moving_finger=0.000000 start: bounds=1 collision=0
+a HOME->FIX moving_finger=0.000000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 5 states (2 start + 3 goal)
+Info:    Solution found in 0.019099 seconds
+a HOME->FIX moving_finger=0.000000 PLAN PASS: 378 verified samples (max joint step 0.01 rad)
+a HOME->FIX moving_finger=0.040000 start: bounds=1 collision=0
+a HOME->FIX moving_finger=0.040000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 5 states (2 start + 3 goal)
+Info:    Solution found in 0.016979 seconds
+a HOME->FIX moving_finger=0.040000 PLAN PASS: 329 verified samples (max joint step 0.01 rad)
+a FIX->HOME moving_finger=0.000000 start: bounds=1 collision=0
+a FIX->HOME moving_finger=0.000000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 5 states (2 start + 3 goal)
+Info:    Solution found in 0.020183 seconds
+a FIX->HOME moving_finger=0.000000 PLAN PASS: 343 verified samples (max joint step 0.01 rad)
+a FIX->HOME moving_finger=0.040000 start: bounds=1 collision=0
+a FIX->HOME moving_finger=0.040000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 5 states (2 start + 3 goal)
+Info:    Solution found in 0.013830 seconds
+a FIX->HOME moving_finger=0.040000 PLAN PASS: 282 verified samples (max joint step 0.01 rad)
+b HOME->FIX moving_finger=0.000000 start: bounds=1 collision=0
+b HOME->FIX moving_finger=0.000000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 5 states (2 start + 3 goal)
+Info:    Solution found in 0.016968 seconds
+b HOME->FIX moving_finger=0.000000 PLAN PASS: 336 verified samples (max joint step 0.01 rad)
+b HOME->FIX moving_finger=0.040000 start: bounds=1 collision=0
+b HOME->FIX moving_finger=0.040000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 4 states (2 start + 2 goal)
+Info:    Solution found in 0.015891 seconds
+b HOME->FIX moving_finger=0.040000 PLAN PASS: 416 verified samples (max joint step 0.01 rad)
+b FIX->HOME moving_finger=0.000000 start: bounds=1 collision=0
+b FIX->HOME moving_finger=0.000000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 4 states (2 start + 2 goal)
+Info:    Solution found in 0.014897 seconds
+b FIX->HOME moving_finger=0.000000 PLAN PASS: 301 verified samples (max joint step 0.01 rad)
+b FIX->HOME moving_finger=0.040000 start: bounds=1 collision=0
+b FIX->HOME moving_finger=0.040000 goal: bounds=1 collision=0
+Debug:   RRTConnect: Planner range detected to be 2.663600
+Info:    RRTConnect: Starting planning with 1 states already in datastructure
+Info:    RRTConnect: Created 4 states (2 start + 2 goal)
+Info:    Solution found in 0.014858 seconds
+b FIX->HOME moving_finger=0.040000 PLAN PASS: 336 verified samples (max joint step 0.01 rad)
+OVERALL PASS (offline geometric validation; no execution)

@@ -1,0 +1,73 @@
+# Shared candidate geometry and quality settings; no physical execution.
+/**:
+  ros__parameters:
+    planning_group: fr3_arm
+    move_group_namespace: /dual_arm
+    base_frame: fr3_link0
+    tcp_link: fr3_hand_tcp
+    end_effector_link: fr3_hand_tcp
+    cloud_topic: /cable_camera/cable_points
+    clicked_point_topic: /clicked_point
+    auto_generate: true
+    local_radius: 0.025
+    min_local_points: 12
+    pca_ratio: 4.0
+    max_line_offset: 0.01
+    require_fresh_cloud: true
+    max_cloud_age: 2.0
+    roll_step_degrees: 30.0
+    approach_distance: 0.04
+    cartesian_step: 0.003
+    jump_threshold: 2.0
+    ik_attempts: 2
+    planning_time: 1.0
+    velocity_scaling: 0.1
+    acceleration_scaling: 0.1
+    validation_joint_step: 0.03
+    min_joint_margin: 0.02
+    min_dexterity: 0.005
+    jacobian_length_scale: 0.3
+    weight_margin: 3.0
+    weight_dexterity: 1.0
+    weight_clearance: 1.0
+    weight_length: 0.1
+    target_offset:
+    - 0.0
+    - 0.0
+    - 0.0
+    tf_timeout: 1.0
+    start_tolerance: 0.02
+    gripper_enabled: true
+    gripper_joint_names:
+    - fr3_finger_joint1
+    - fr3_finger_joint2
+    open_width: 0.08
+    platform_enabled: true
+    platform_thickness: 0.01
+    platform_rectangle: true
+    platform_points:
+    - -0.252
+    - -0.504
+    - 0.422
+    - -0.234
+    - -0.515
+    - 0.936
+    - 0.108
+    - -0.524
+    - 0.953
+    - 0.38
+    - -0.53
+    - 0.907
+    - 0.557
+    - -0.531
+    - 0.74
+    - 0.644
+    - -0.528
+    - 0.573
+    - 0.653
+    - -0.525
+    - 0.454
+    near_board_height_threshold: 0.01
+    near_board_raise_threshold: 0.008
+    near_board_target_raise: 0.005
+    candidate_worker_threads: 10

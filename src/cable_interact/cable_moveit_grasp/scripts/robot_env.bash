@@ -17,3 +17,5 @@ export ROS_LOCALHOST_ONLY=0
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export FASTRTPS_DEFAULT_PROFILES_FILE=/home/flexcycle/Motion_Correlation/cmcor/pointcloud/config/fastdds/mini_pc_mtu1400.xml
 export FASTDDS_DEFAULT_PROFILES_FILE="$FASTRTPS_DEFAULT_PROFILES_FILE"
+# Load the manual dual-arm commands into this terminal.
+source "${BASH_SOURCE[0]%/*}/dual_arm_commands.bash" || return

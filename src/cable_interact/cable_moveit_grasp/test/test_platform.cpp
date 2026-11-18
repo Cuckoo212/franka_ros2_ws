@@ -18,6 +18,26 @@ int main() {
     if(std::abs(d.dot(p.normal)-.01)>1e-10) return 3;
     if(std::abs(p.normal.dot(Eigen::Vector3d(a.x,a.y,a.z)-p.center)+.005)>1e-10) return 4;
   }
+  auto rectangle=cable_grasp::makePlatform(points,.01,true);
+  if(rectangle.mesh.vertices.size()!=8 || rectangle.mesh.triangles.size()!=12) return 7;
+  // Both in-plane rectangle axes are orthogonal, with consistent thickness.
+  auto vertex=[&](size_t i) {const auto& q=rectangle.mesh.vertices[i]; return Eigen::Vector3d(q.x,q.y,q.z);};
+  if(std::abs((vertex(1)-vertex(0)).dot(vertex(3)-vertex(0)))>1e-10) return 8;
+  for(size_t i=0;i<4;++i)
+    if(std::abs((vertex(i+4)-vertex(i)).norm()-.01)>1e-10) return 9;
+  std::map<std::pair<unsigned,unsigned>,std::pair<int,int>> rect_edges;
+  for(const auto& t:rectangle.mesh.triangles) for(int j=0;j<3;++j) {
+    unsigned a=t.vertex_indices[j],b=t.vertex_indices[(j+1)%3];
+    auto& edge=rect_edges[std::minmax(a,b)]; ++edge.first; edge.second+=a<b ? 1 : -1;
+  }
+  for(const auto& edge:rect_edges) if(edge.second.first!=2 || edge.second.second!=0) return 10;
+  const Eigen::Vector3d u=(vertex(1)-vertex(0)).normalized(), v=(vertex(3)-vertex(0)).normalized();
+  for(size_t i=0;i<points.size()/3;++i) {
+    Eigen::Vector3d q(points[3*i],points[3*i+1],points[3*i+2]);
+    auto delta=q-vertex(0);
+    if(delta.dot(u)<-1e-10 || delta.dot(u)>(vertex(1)-vertex(0)).norm()+1e-10 ||
+       delta.dot(v)<-1e-10 || delta.dot(v)>(vertex(3)-vertex(0)).norm()+1e-10) return 11;
+  }
   auto rejected=[](const std::vector<double>& q,double thickness) {
     try { cable_grasp::makePlatform(q,thickness); return false; } catch(const std::runtime_error&) {return true;}
   };

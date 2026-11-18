@@ -1,0 +1,6 @@
+cable_moveit_alternate_grasp:
+  ros__parameters:
+    physical_backend: false
+    backend_timeout: 240.0
+    perception_settle_time: 0.5
+    max_cycles: 5  # Finish after five A-HOME handovers; B stays holding. 0 explicitly enables unlimited cycles.

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "name": "alternate_cable",
+  "executor": "alternate_grasp_state_machine",
+  "default_cycles": 5,
+  "first_point": "fresh_manual_b_rviz_plan",
+  "failure_policy": "failed_hold",
+  "completion": "A home, B holding; no automatic release",
+  "states": [
+    {
+      "id": "home_a_initial",
+      "command": "home_a",
+      "next": "home_b_initial"
+    },
+    {
+      "id": "home_b_initial",
+      "command": "home_b",
+      "next": "wait_first_b_point"
+    },
+    {
+      "id": "wait_first_b_point",
+      "command": null,
+      "next": "first_b_grasp"
+    },
+    {
+      "id": "first_b_grasp",
+      "command": "grasp_b",
+      "next": "b_to_fixB"
+    },
+    {
+      "id": "b_to_fixB",
+      "command": "fix_b",
+      "next": "a_grasp"
+    },
+    {
+      "id": "a_grasp",
+      "command": "grasp_a",
+      "next": "b_release_and_home"
+    },
+    {
+      "id": "b_release_and_home",
+      "command": "home_b",
+      "next": "a_fix"
+    },
+    {
+      "id": "a_fix",
+      "command": "fix_a",
+      "next": "b_grasp"
+    },
+    {
+      "id": "b_grasp",
+      "command": "grasp_b",
+      "next": "a_release_and_home"
+    },
+    {
+      "id": "a_release_and_home",
+      "command": "home_a",
+      "next": "b_to_fixB"
+    }
+  ]
+}

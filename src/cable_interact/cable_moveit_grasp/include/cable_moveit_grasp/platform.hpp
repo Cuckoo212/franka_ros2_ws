@@ -15,7 +15,7 @@ struct Platform {
 };
 // Ordered convex polygon, projected onto its least-squares plane and extruded
 // symmetrically. Reject invalid input rather than silently changing its boundary.
-inline Platform makePlatform(const std::vector<double>& xyz, double thickness) {
+inline Platform makePlatform(const std::vector<double>& xyz, double thickness, bool rectangle = false) {
   if (xyz.size()<9 || xyz.size()%3 || !std::isfinite(thickness) || thickness<=0.)
     throw std::runtime_error("Invalid platform points or thickness");
   const size_t count=xyz.size()/3;
@@ -37,17 +37,33 @@ inline Platform makePlatform(const std::vector<double>& xyz, double thickness) {
     Eigen::Vector3d p=points.row(i).transpose();
     projected.push_back(p-result.normal.dot(p-result.center)*result.normal);
   }
+  if (rectangle) {
+    // Stable in-plane axes aligned to base X, rather than an arbitrary PCA yaw.
+    Eigen::Vector3d u=Eigen::Vector3d::UnitX()-result.normal.x()*result.normal;
+    if (u.norm()<1e-6) u=Eigen::Vector3d::UnitZ()-result.normal.z()*result.normal;
+    u.normalize();
+    const Eigen::Vector3d v=result.normal.cross(u).normalized();
+    double u0=INFINITY,u1=-INFINITY,v0=INFINITY,v1=-INFINITY;
+    for (const auto& point:projected) {
+      const Eigen::Vector3d d=point-result.center;
+      u0=std::min(u0,d.dot(u)); u1=std::max(u1,d.dot(u));
+      v0=std::min(v0,d.dot(v)); v1=std::max(v1,d.dot(v));
+    }
+    projected={result.center+u0*u+v0*v,result.center+u1*u+v0*v,
+               result.center+u1*u+v1*v,result.center+u0*u+v1*v};
+  }
+  const size_t boundary_count=projected.size();
   double area=0.;
-  for (size_t i=0;i<count;++i)
-    area+=result.normal.dot((projected[i]-result.center).cross(projected[(i+1)%count]-result.center));
+  for (size_t i=0;i<boundary_count;++i)
+    area+=result.normal.dot((projected[i]-result.center).cross(projected[(i+1)%boundary_count]-result.center));
   if (std::abs(area)<1e-8) throw std::runtime_error("Degenerate platform polygon");
   if (area<0.) std::reverse(projected.begin(),projected.end());
   // Every vertex must be on the left of each oriented edge; this also rejects
   // crossed boundaries and duplicate vertices for this convex mesh builder.
-  for (size_t i=0;i<count;++i) {
-    const auto edge=projected[(i+1)%count]-projected[i];
+  for (size_t i=0;i<boundary_count;++i) {
+    const auto edge=projected[(i+1)%boundary_count]-projected[i];
     if (edge.norm()<1e-6) throw std::runtime_error("Duplicate platform point");
-    for (size_t j=0;j<count;++j)
+    for (size_t j=0;j<boundary_count;++j)
       if (result.normal.dot(edge.cross(projected[j]-projected[i])) < -1e-8)
         throw std::runtime_error("Platform boundary must be ordered and convex");
   }
@@ -61,12 +77,12 @@ inline Platform makePlatform(const std::vector<double>& xyz, double thickness) {
     t.vertex_indices={static_cast<uint32_t>(a),static_cast<uint32_t>(b),static_cast<uint32_t>(c)};
     result.mesh.triangles.push_back(t);
   };
-  for (size_t i=1;i+1<count;++i) {
-    triangle(0,i+1,i); triangle(count,count+i,count+i+1);
+  for (size_t i=1;i+1<boundary_count;++i) {
+    triangle(0,i+1,i); triangle(boundary_count,boundary_count+i,boundary_count+i+1);
   }
-  for (size_t i=0;i<count;++i) {
-    const size_t next=(i+1)%count;
-    triangle(i,next,count+next); triangle(i,count+next,count+i);
+  for (size_t i=0;i<boundary_count;++i) {
+    const size_t next=(i+1)%boundary_count;
+    triangle(i,next,boundary_count+next); triangle(i,boundary_count+next,boundary_count+i);
   }
   return result;
 }

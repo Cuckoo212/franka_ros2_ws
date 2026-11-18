@@ -1,0 +1,5 @@
+arm_base_cloud:
+  ros__parameters:
+    # A (.102) origin and orientation expressed in B (.101).
+    left_origin_in_right: [0.47, 0.0, 0.0]
+    publish_base_tf: true

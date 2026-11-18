@@ -61,3 +61,37 @@ def rotation_quaternion(rotation):
     _, vectors = np.linalg.eigh(k)
     q = vectors[:, -1]
     return q if q[3] >= 0 else -q
+
+
+def invert_rigid_transform(rotation, translation):
+    """Invert parent<-child into child<-parent; translation is in parent axes."""
+    rotation = np.asarray(rotation, dtype=float)
+    translation = np.asarray(translation, dtype=float)
+    if (rotation.shape != (3, 3) or translation.shape != (3,)
+            or not np.isfinite(rotation).all() or not np.isfinite(translation).all()
+            or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-10)
+            or not np.isclose(np.linalg.det(rotation), 1.0)):
+        raise ValueError('Expected a finite rigid transform with proper rotation')
+    return rotation.T, -rotation.T @ translation
+
+
+def camera_to_left_transform(rotation_b_c, translation_b_c, left_origin_in_right):
+    """A<-C = inverse(B<-A) * B<-C; A has opposite X/Y and common Z."""
+    rotation_b_c = np.asarray(rotation_b_c, dtype=float)
+    translation_b_c = np.asarray(translation_b_c, dtype=float)
+    # Validate calibration transform as well as the inter-base transform.
+    invert_rigid_transform(rotation_b_c, translation_b_c)
+    rotation_a_b, translation_a_b = invert_rigid_transform(
+        np.diag([-1., -1., 1.]), left_origin_in_right)
+    return rotation_a_b @ rotation_b_c, rotation_a_b @ translation_b_c + translation_a_b
+
+
+def camera_obstacle_pose(path, center_optical):
+    """Box pose in B, using exactly the optical transform used by cable clouds."""
+    offset = np.asarray(center_optical, dtype=float)
+    if offset.shape != (3,) or not np.isfinite(offset).all():
+        raise ValueError('Camera obstacle center must contain three finite optical coordinates')
+    rotation, translation, _, target = load_calibration(path, optical_input=True)
+    if target != 'fr3_link0':
+        raise ValueError('Camera obstacle calibration must target fr3_link0')
+    return [float(v) for v in np.r_[rotation @ offset + translation, rotation_quaternion(rotation)]]

@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "name": "home",
+  "description": "Open own gripper, then move to recorded joint HOME.",
+  "implementation": "src/skills/home_skill.cpp",
+  "parameters": {
+    "type": "object",
+    "required": [
+      "arm"
+    ],
+    "properties": {
+      "arm": {
+        "type": "string",
+        "enum": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "preconditions": [
+    "execution_enabled",
+    "both_raw_joint_states_fresh"
+  ],
+  "success_conditions": [
+    "own_gripper_open",
+    "own_home_confirmed"
+  ],
+  "failure_behavior": "stop scheduling; keep current grasp; explicit recovery required after physical failure",
+  "resource_locks": [
+    "shared_robot_motion",
+    "arm:{arm}"
+  ],
+  "backend": "moveit_joint_plan",
+  "service": "/dual_arm/dual_arm_motion/{arm}/home"
+}

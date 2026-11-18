@@ -99,6 +99,7 @@ class GripperActionServer : public rclcpp::Node {
   rclcpp::Service<Trigger>::SharedPtr stop_service_;
   std::mutex gripper_state_mutex_;
   franka::GripperState current_gripper_state_;
+  std::chrono::steady_clock::time_point last_state_update_{};
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_states_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 
@@ -170,6 +171,15 @@ class GripperActionServer : public rclcpp::Node {
     }
     if (rclcpp::ok()) {
       const auto kResult = result_future.get();
+      {
+        std::lock_guard<std::mutex> guard(gripper_state_mutex_);
+        const double age = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_state_update_).count();
+        RCLCPP_INFO(get_logger(),
+                    "Gripper %s result: success=%s error='%s'; last_state width=%.9f m max_width=%.9f m is_grasped=%s age=%.6f s",
+                    kTaskName.c_str(), kResult->success ? "true" : "false", kResult->error.c_str(),
+                    current_gripper_state_.width, current_gripper_state_.max_width,
+                    current_gripper_state_.is_grasped ? "true" : "false", age);
+      }
       if (kResult->success) {
         RCLCPP_INFO(get_logger(), "Gripper %s succeeded", kTaskName.c_str());
         goal_handle->succeed(kResult);
@@ -210,6 +220,9 @@ class GripperActionServer : public rclcpp::Node {
       const std::shared_ptr<rclcpp_action::ServerGoalHandle<T>>& goal_handle) {
     auto gripper_feedback = std::make_shared<typename T::Feedback>();
     std::lock_guard<std::mutex> guard(gripper_state_mutex_);
+    if (std::chrono::steady_clock::now() - last_state_update_ > std::chrono::seconds(1)) {
+      return;  // A cached hardware sample is not current action feedback.
+    }
     gripper_feedback->current_width = current_gripper_state_.width;
     goal_handle->publish_feedback(gripper_feedback);
   }

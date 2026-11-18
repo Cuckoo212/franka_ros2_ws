@@ -1,0 +1,141 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mlt producer="main_bin" version="7.32.0" root="/home/flexcycle/franka_ros2_ws/video_edits/cable_demo">
+  <profile description="HD 1080p30" width="1920" height="1080" frame_rate_num="30" frame_rate_den="1" progressive="1" sample_aspect_num="1" sample_aspect_den="1" display_aspect_num="16" display_aspect_den="9" colorspace="709" />
+  <producer id="black" in="0" out="6715">
+    <property name="resource">0</property>
+    <property name="mlt_service">color</property>
+    <property name="length">6716</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">0</property>
+    <property name="kdenlive:clipname">Background</property>
+    <property name="kdenlive:duration">6716</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <producer id="video" in="0" out="6715">
+    <property name="resource">/home/flexcycle/Videos/Screencasts/demo1_10-26-2026 06:30:41 PM.webm</property>
+    <property name="mlt_service">avformat</property>
+    <property name="length">6716</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">4</property>
+    <property name="kdenlive:clipname">Original demo</property>
+    <property name="kdenlive:duration">6716</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <producer id="overlay1" in="0" out="149">
+    <property name="resource">/home/flexcycle/franka_ros2_ws/video_edits/cable_demo/assets/selection_v2_1.png</property>
+    <property name="mlt_service">qimage</property>
+    <property name="length">150</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">5</property>
+    <property name="kdenlive:clipname">Selection 1: circle and arrow</property>
+    <property name="kdenlive:duration">150</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <producer id="overlay2" in="0" out="149">
+    <property name="resource">/home/flexcycle/franka_ros2_ws/video_edits/cable_demo/assets/selection_v2_2.png</property>
+    <property name="mlt_service">qimage</property>
+    <property name="length">150</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">6</property>
+    <property name="kdenlive:clipname">Selection 2: circle and arrow</property>
+    <property name="kdenlive:duration">150</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <producer id="overlay3" in="0" out="149">
+    <property name="resource">/home/flexcycle/franka_ros2_ws/video_edits/cable_demo/assets/selection_v2_3.png</property>
+    <property name="mlt_service">qimage</property>
+    <property name="length">150</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">7</property>
+    <property name="kdenlive:clipname">Selection 3: circle and arrow</property>
+    <property name="kdenlive:duration">150</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <producer id="overlay4" in="0" out="149">
+    <property name="resource">/home/flexcycle/franka_ros2_ws/video_edits/cable_demo/assets/selection_v2_4.png</property>
+    <property name="mlt_service">qimage</property>
+    <property name="length">150</property>
+    <property name="eof">pause</property>
+    <property name="kdenlive:id">8</property>
+    <property name="kdenlive:clipname">Selection 4: circle and arrow</property>
+    <property name="kdenlive:duration">150</property>
+    <property name="set.test_audio">1</property>
+  </producer>
+  <playlist id="black_track">
+    <entry producer="black" in="0" out="6715" />
+  </playlist>
+  <playlist id="playlist0">
+    <entry producer="video" in="0" out="6715" />
+  </playlist>
+  <playlist id="playlist1" />
+  <tractor id="track0" in="0" out="6715">
+    <property name="kdenlive:track_name">Demo video</property>
+    <property name="kdenlive:trackheight">80</property>
+    <property name="kdenlive:timeline_active">1</property>
+    <track producer="playlist0" hide="audio" />
+    <track producer="playlist1" hide="audio" />
+  </tractor>
+  <playlist id="playlist2">
+    <blank length="838" />
+    <entry producer="overlay1" in="0" out="149" />
+    <blank length="1340" />
+    <entry producer="overlay2" in="0" out="149" />
+    <blank length="1360" />
+    <entry producer="overlay3" in="0" out="149" />
+    <blank length="1224" />
+    <entry producer="overlay4" in="0" out="149" />
+  </playlist>
+  <playlist id="playlist3" />
+  <tractor id="track1" in="0" out="6715">
+    <property name="kdenlive:track_name">Selection annotations</property>
+    <property name="kdenlive:trackheight">80</property>
+    <property name="kdenlive:timeline_active">1</property>
+    <track producer="playlist2" hide="audio" />
+    <track producer="playlist3" hide="audio" />
+  </tractor>
+  <tractor id="sequence" in="0" out="6715">
+    <property name="kdenlive:uuid">{b1c8dc2a-73be-4901-ab87-5bf55384b666}</property>
+    <property name="kdenlive:id">3</property>
+    <property name="kdenlive:clipname">Cable selection demo</property>
+    <property name="kdenlive:sequenceproperties.activeTrack">1</property>
+    <property name="kdenlive:sequenceproperties.tracks">2</property>
+    <property name="kdenlive:sequenceproperties.hasAudio">0</property>
+    <property name="kdenlive:sequenceproperties.hasVideo">1</property>
+    <property name="kdenlive:sequenceproperties.duration">6716</property>
+    <property name="kdenlive:sequenceproperties.position">2350</property>
+    <property name="kdenlive:sequenceproperties.zonein">0</property>
+    <property name="kdenlive:sequenceproperties.zoneout">6716</property>
+    <property name="kdenlive:sequenceproperties.guides">[{"pos": 32.93333333333333, "comment": "Selection 1: TF appears", "type": 0}, {"pos": 82.6, "comment": "Selection 2: TF appears", "type": 0}, {"pos": 132.93333333333334, "comment": "Selection 3: TF appears", "type": 0}, {"pos": 178.73333333333332, "comment": "Selection 4: TF appears", "type": 0}]</property>
+    <track producer="black_track" />
+    <track producer="track0" />
+    <track producer="track1" />
+    <transition in="0" out="6715">
+      <property name="mlt_service">frei0r.cairoblend</property>
+      <property name="a_track">1</property>
+      <property name="b_track">2</property>
+      <property name="disable">0</property>
+      <property name="always_active">1</property>
+      <property name="internal_added">237</property>
+    </transition>
+  </tractor>
+  <playlist id="main_bin">
+    <property name="kdenlive:docproperties.version">1.1</property>
+    <property name="kdenlive:docproperties.kdenliveversion">26.08.2</property>
+    <property name="kdenlive:docproperties.documentid">1793190000</property>
+    <property name="kdenlive:docproperties.uuid">{b1c8dc2a-73be-4901-ab87-5bf55384b666}</property>
+    <property name="kdenlive:docproperties.activetimeline">{b1c8dc2a-73be-4901-ab87-5bf55384b666}</property>
+    <property name="kdenlive:docproperties.opensequences">{b1c8dc2a-73be-4901-ab87-5bf55384b666}</property>
+    <property name="kdenlive:docproperties.profile">atsc_1080p_30</property>
+    <property name="kdenlive:docproperties.enableproxy">0</property>
+    <entry producer="video" />
+    <entry producer="overlay1" />
+    <entry producer="overlay2" />
+    <entry producer="overlay3" />
+    <entry producer="overlay4" />
+    <entry producer="sequence" />
+  </playlist>
+  <tractor id="project" in="0" out="6715">
+    <property name="kdenlive:projectTractor">1</property>
+    <track producer="sequence" in="0" out="6715" />
+  </tractor>
+</mlt>
